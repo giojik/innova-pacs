@@ -1,0 +1,43 @@
+@media print {
+    /* 1. ფურცლის ჰორიზონტალური განლაგება */
+    @page {
+        size: landscape;
+        margin: 0;
+    }
+
+    /* 2. ყველაფრის დამალვა, საერთოდ ყველაფრის, გარდა Viewport-ისა */
+    header, footer, .Header, .sidepanel-left, .sidepanel-right, 
+    .ThumbnailList, .Toolbar, .toolbar, .buttonSection, 
+    .Rounded-lg, button, .btn, .dicom-tag-browser {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* 3. ძირითადი კონტეინერების იძულებითი გაფართოება */
+    #root, .app-container, main, .viewport-grid, .viewport-pane {
+        display: block !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: black !important; /* შავი ფონი, როგორც მონიტორზე */
+    }
+
+    /* 4. Canvas-ის (სურათის) იძულებითი ზომა */
+    /* ეს ნაწილი ყველაზე მნიშვნელოვანია */
+    canvas {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: contain !important; /* ინარჩუნებს პროპორციას */
+        image-rendering: pixelated; /* ინარჩუნებს სიმკვეთრეს */
+    }
+
+    /* 5. ტექსტური ინფორმაციის (Overlays) გამოჩენა სურათზე */
+    .viewport-element {
+        width: 100% !important;
+        height: 100% !important;
+    }
+}

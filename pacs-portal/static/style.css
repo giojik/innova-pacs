@@ -1,0 +1,50 @@
+:root {
+    --innova-green: #b1d431;
+    --innova-dark: #003366;
+    --innova-light-green: #d9eba1;
+    --bg-overlay: rgba(255, 255, 255, 0.9);
+}
+
+body { font-family: 'Inter', sans-serif; background: #f8fafc; margin: 0; color: #1e293b; }
+
+/* Login Page */
+.login-body {
+    background: url('/p/bg.jpg') no-repeat center center fixed;
+    background-size: cover;
+    height: 100vh; display: flex; align-items: center; justify-content: center;
+}
+.login-card {
+    background: var(--bg-overlay); backdrop-filter: blur(10px);
+    padding: 3rem; border-radius: 50px; width: 400px;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+    border-top: 10px solid var(--innova-green); text-align: center;
+}
+
+/* Table and General */
+.header-title { color: var(--innova-dark); font-weight: 900; italic: true; }
+.text-green { color: var(--innova-green); }
+
+.innova-table { width: 100%; border-collapse: collapse; background: white; border-radius: 30px; overflow: hidden; shadow: xl; }
+.innova-table thead { background: #0f172a; color: white; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+.innova-table th, .innova-table td { padding: 1.2rem; text-align: left; }
+.innova-table tr:hover { background: #f1f5f9; cursor: pointer; }
+
+.patient-id { color: var(--innova-dark); font-weight: 800; font-family: monospace; }
+.patient-name { color: #000; font-weight: 900; font-size: 1.1rem; }
+
+/* Modal (Share Popup) */
+.modal {
+    display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6); backdrop-filter: blur(5px);
+}
+.modal-content {
+    background: white; margin: 10% auto; padding: 2.5rem; border-radius: 40px;
+    width: 450px; position: relative; border-bottom: 10px solid var(--innova-green);
+}
+#qrcode { margin: 20px auto; display: flex; justify-content: center; }
+
+/* Buttons */
+.btn { padding: 0.6rem 1.2rem; border-radius: 12px; font-weight: 800; text-transform: uppercase; text-decoration: none; font-size: 11px; transition: 0.3s; border: none; cursor: pointer; }
+.btn-green { background: var(--innova-green); color: white; }
+.btn-outline { border: 2px solid var(--innova-green); color: var(--innova-green); }
+.btn-share { background: #fb923c; color: white; }

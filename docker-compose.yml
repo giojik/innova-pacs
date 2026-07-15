@@ -1,0 +1,299 @@
+version: "3.8"
+
+services:
+  # 1. LDAP (DCM4CHEE შიდა კონფიგურაცია)
+  ldap:
+    image: dcm4che/slapd-dcm4chee:2.6.7-33.0
+    container_name: pacs-ldap
+    restart: always
+    mem_limit: 512m
+    ports:
+      - "389:389"
+    logging:
+      driver: json-file
+      options: { max-size: "10m" }
+    environment:
+      SKIP_INIT_CONFIG: "false"
+      LDAP_ORGANISATION: "DCM4CHE"
+      LDAP_ROOTPASS: "secret"
+      LDAP_CONFIGPASS: "secret"
+      ARCHIVE_DEVICE_NAME: ${DEVICE_NAME}
+      ARCHIVE_WEBAPP_NAME: ${DEVICE_NAME}
+      AE_TITLE: ${AE_TITLE}
+      TZ: ${TZ}
+    volumes:
+      - ${BASE_DATA_PATH}/ldap-vol:/var/lib/openldap/openldap-data
+      - ${BASE_DATA_PATH}/slapd-vol:/etc/openldap/slapd.d
+    networks:
+      - pacs-net
+
+  # 2. Database (PostgreSQL)
+  db:
+    image: dcm4che/postgres-dcm4chee:16.4-33
+    container_name: pacs-db
+    restart: always
+    mem_limit: 4g
+    logging:
+      driver: json-file
+      options: { max-size: "10m" }
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      TZ: ${TZ}
+    volumes:
+      - ${BASE_DATA_PATH}/db:/var/lib/postgresql/data
+    networks:
+      - pacs-net
+
+  # 3. Keycloak (Authentication & Themes)
+  keycloak:
+    image: dcm4che/keycloak:26.0.6
+    container_name: pacs-keycloak
+    restart: always
+    mem_limit: 4g
+    environment:
+      JAVA_OPTS_APPEND: -Xms2g -Xmx3g
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASS}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/${DB_NAME}
+      KC_DB_USERNAME: ${DB_USER}
+      KC_DB_PASSWORD: ${DB_PASS}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: ${DOMAIN_NAME}
+      KEYCLOAK_CLIENT_ID: "risinnova-ui"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      TZ: ${TZ}
+    volumes:
+      # აუცილებელია მონაცემთა შესანახად
+      - ${BASE_DATA_PATH}/keycloak:/opt/keycloak/data
+      - ./configuration/keycloak-theme/innova:/opt/keycloak/themes/innova:ro
+    depends_on:
+      - db
+    networks:
+      - pacs-net
+
+  # 4. DCM4CHEE Archive (PACS)
+  arc:
+    image: dcm4che/dcm4chee-arc-psql:5.33.0
+    container_name: pacs-arc
+    restart: always
+    mem_limit: 16g
+    logging:
+      driver: json-file
+      options: { max-size: "10m" }
+    ports:
+      - "${DICOM_PORT}:11112"
+    environment:
+      JAVA_OPTS: -Xms8g -Xmx16g -XX:MetaspaceSize=96M -XX:MaxMetaspaceSize=256m
+      LDAP_URL: ldap://ldap:389
+      POSTGRES_HOST: db
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      AUTH_SERVER_URL: http://keycloak:8080/realms/dcm4che
+      KEYCLOAK_CLIENT_ID: dcm4chee-arc-ui
+      AUTH_ALLOWED_ORIGINS: https://${DOMAIN_NAME}
+      WILDFLY_WAIT_FOR: ldap:389 db:5432 keycloak:8080
+      DCM4CHEE_DEVICE_NAME: ${DEVICE_NAME}
+      DCM4CHEE_AE_TITLE: ${AE_TITLE}
+      STORAGE_DIR: /storage
+      TZ: ${TZ}
+      SKIP_AUTH_LOCAL_REQUESTS: "true"
+    depends_on:
+      - ldap
+      - db
+      - keycloak
+    volumes:
+      - ${BASE_DATA_PATH}/wildfly:/opt/wildfly/standalone
+      - ${STORAGE_PATH}:/var/local/dcm4chee-arc/storage
+      - /opt/pacs/data/img:/storage
+    networks:
+      - pacs-net
+
+  # 5. OHIF Viewer
+  ohif:
+    image: ohif/app:v3.10.0-beta.33
+    container_name: pacs-ohif
+    restart: always
+    mem_limit: 512m
+    volumes:
+       - ./configuration/ohif/app-config.js:/usr/share/nginx/html/app-config.js
+       - ./configuration/ohif/app-config-public.js:/usr/share/nginx/html/app-config-public.js
+       - ./configuration/locales/ka/Common.json:/usr/share/nginx/html/locales/ka/Common.json
+    networks:
+      - pacs-net
+
+  # 6. Nginx (Proxy & SSL)
+  nginx:
+    image: nginx:alpine
+    container_name: pacs-proxy
+    restart: always
+    mem_limit: 1g
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AE_TITLE: ${AE_TITLE} # გადავცემთ ცვლადს .env-დან
+      NGINX_ENVSUBST_FILTER: AE_TITLE
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx # ვეუბნებით სად შეინახოს გამზადებული ფაილი
+      TZ: ${TZ}
+    volumes:
+      - ./configuration/nginx/nginx.conf:/etc/nginx/templates/nginx.conf.template:ro
+      - ./configuration/nginx/ae_title.conf:/etc/nginx/conf.d/ae_title.conf:ro
+      - ./configuration/certs:/etc/nginx/certs:ro
+      - ./configuration/ohif/share-button.js:/etc/nginx/scripts/share-button.js:ro
+      - ./configuration/ohif/app-config.js:/etc/nginx/scripts/app-config.js:ro
+      - ./configuration/ohif/app-config-public.js:/etc/nginx/scripts/app-config-public.js:ro
+      - ./configuration/keycloak-theme/innova/login/resources/img/background.jpg:/etc/nginx/scripts/background.jpg:ro
+      - ./configuration/certs/favicon.ico:/etc/nginx/static/favicon.ico:ro
+      - ./configuration/ohif/print-style.css:/etc/nginx/scripts/print-style.css:ro
+      # ⬇️ აი ეს ბრძანება აკეთებს მთელ მაგიას ⬇️
+   # command: /bin/sh -c "sed 's/_AE_TITLE_VALUE_/${AE_TITLE}/g' /etc/nginx/nginx.conf > /etc/nginx/nginx.conf && nginx -g 'daemon off;' -c /tmp/nginx.conf"
+    depends_on:
+      - arc
+      - ohif
+      - pacs-portal
+      - pacsflow
+    networks:
+      - pacs-net
+
+  # 7. პაციენტის პორტალი და მიგრაციის მართვა
+  pacs-portal:
+    build: ./pacs-portal
+    container_name: pacs-portal
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    restart: always
+    environment:
+      - CLINIC_NAME=${CLINIC_NAME}
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - AE_TITLE=${AE_TITLE}
+      - SMTP_SERVER=${SMTP_SERVER}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - OLD_PACS_URL=${OLD_PACS_URL}
+      - OLD_KEYCLOAK_URL=${OLD_KEYCLOAK_URL}
+      - OLD_CLIENT_ID=${OLD_CLIENT_ID}
+      - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./pacs-portal/share_logs.csv:/app/share_logs.csv
+      - ./pacs-portal/migration_status.txt:/app/migration_status.txt
+      - ./pacs-portal/migrated_uids.txt:/app/migrated_uids.txt
+      - ./pacs-portal/active_transfers.json:/app/active_transfers.json
+      - ./pacs-portal/live_sync_active.json:/app/live_sync_active.json
+      - ./pacs-portal/live_sync_status.txt:/app/live_sync_status.txt
+      - ./pacs-portal/static:/app/static
+    networks:
+      - pacs-net
+    depends_on:
+      - arc
+
+  # 2. დღის სინქრონიზაცია (Port 8001)
+  pacs-sync-live:
+    build: ./pacs-portal
+    container_name: pacs-sync-live
+    command: uvicorn live_sync:app --host 0.0.0.0 --port 8001
+    restart: always
+    environment:
+      - AE_TITLE=${AE_TITLE}
+      - OLD_PACS_URL=${OLD_PACS_URL}
+      - OLD_KEYCLOAK_URL=${OLD_KEYCLOAK_URL}
+      - OLD_CLIENT_ID=${OLD_CLIENT_ID}
+      - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
+    volumes:
+      - ./pacs-portal/live_sync_active.json:/app/live_sync_active.json
+      - ./pacs-portal/live_sync_status.txt:/app/live_sync_status.txt
+    networks:
+      - pacs-net
+    depends_on:
+      - arc
+
+  # 3. ღამის მიგრაცია (ფონური პროცესი)
+  pacs-migrator:
+    build: ./pacs-portal
+    container_name: pacs-migrator
+    command: python migrator.py
+    restart: always
+    environment:
+      - AE_TITLE=${AE_TITLE}
+      - OLD_PACS_URL=${OLD_PACS_URL}
+      - OLD_KEYCLOAK_URL=${OLD_KEYCLOAK_URL}
+      - OLD_CLIENT_ID=${OLD_CLIENT_ID}
+      - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
+    volumes:
+      - ./pacs-portal/migrated_uids.txt:/app/migrated_uids.txt
+      - ./pacs-portal/migration_status.txt:/app/migration_status.txt
+      - ./pacs-portal/active_transfers.json:/app/active_transfers.json
+    networks:
+      - pacs-net
+    depends_on:
+      - arc
+
+  # 4. სტატისტიკა (Port 8002)
+  pacs-stats:
+    build: ./pacs-portal
+    container_name: pacs-stats
+    command: uvicorn stats:app --host 0.0.0.0 --port 8002
+    restart: always
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+    networks:
+      - pacs-net
+    depends_on:
+      - db
+  
+  pacs-shimadzu-fixer:
+    build: ./pacs-portal
+    container_name: pacs-shimadzu-fixer
+    command: python dicom_proxy.py
+    ports:
+      - "11115:11115"
+    networks:
+      - pacs-net
+    restart: always
+
+  pacs-admin:
+    build: ./pacs-admin
+    container_name: pacs-admin
+    command: uvicorn main:app --host 0.0.0.0 --port 8005
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    volumes:
+      - ./pacs-portal:/app/data # აქედან წაიკითხავს JSON და CSV ფაილებს
+    networks:
+      - pacs-net
+    restart: always 
+    
+  pacsflow:
+    build: ./pacsflow
+    container_name: pacsflow
+    restart: always
+    environment:
+      - PACSFLOW_SECRET=${PACSFLOW_SECRET}
+      - KC_BASE=http://keycloak:8080
+      - KC_REALM=dcm4che
+      - KC_CLIENT_ID=risinnova-ui
+      - PACS_LOGIN_URL=https://ris.innovamedical.ge/login
+    volumes:
+      - ./pacsflow/data:/app/data
+    networks:
+      - pacs-net
+
+
+volumes:
+  ldap-vol2:
+  slapd-vol2:
+  db-vol2:
+
+networks:
+  pacs-net:

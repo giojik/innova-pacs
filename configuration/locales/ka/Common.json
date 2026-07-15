@@ -1,0 +1,18 @@
+{
+  "StudyList": "კვლევების სია",
+  "PatientName": "პაციენტის სახელი",
+  "MRN": "სამედიცინო ბარათი (MRN)",
+  "StudyDate": "კვლევის თარიღი",
+  "Description": "აღწერა",
+  "Modality": "მოდალობა",
+  "Accession": "ნომერი (Accession)",
+  "Instances": "სურათები",
+  "No studies available": "კვლევები ვერ მოიძებნა",
+  "Loading...": "იტვირთება...",
+  "Search": "ძებნა",
+  "Clear": "გასუფთავება",
+  "Today": "დღეს",
+  "Yesterday": "გუშინ",
+  "Last 7 Days": "ბოლო 7 დღე",
+  "Advanced Search": "გაფართოებული ძებნა"
+}

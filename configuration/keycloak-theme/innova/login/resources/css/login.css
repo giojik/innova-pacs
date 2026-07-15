@@ -1,0 +1,91 @@
+/* 1. ფონი და ცენტრირება 23:11 */
+html, body, .login-pf {
+    background: url('../img/background.jpg') no-repeat center center fixed !important;
+    background-size: cover !important;
+    height: 100vh !important;
+    width: 100vw !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: hidden !important;
+}
+
+/* დამალე ზედმეტი მწვანე ზოლები და Patternfly-ს ნარჩენები */
+body:before, body:after, .login-pf:before, .login-pf:after, 
+.navbar-pf, .login-pf-page-header, #kc-header-wrapper, .kc-logo-text {
+    display: none !important;
+}
+
+/* 2. ფორმის ბლოკი */
+#kc-container-wrapper {
+    width: 400px !important;
+    z-index: 100 !important;
+}
+
+.card-pf {
+    background: rgba(255, 255, 255, 0.98) !important;
+    border-radius: 12px !important;
+    padding: 30px 40px !important;
+    box-shadow: 0 15px 50px rgba(0,0,0,0.5) !important;
+    border: none !important;
+}
+
+/* 3. GEO \ ENG გადამრთველის აღდგენა და გასწორება */
+
+/* მშობელი კონტეინერი უნდა ჩანდეს! */
+#kc-locale, #kc-locale-wrapper {
+    display: block !important;
+    visibility: visible !important;
+}
+
+/* დამალე მხოლოდ ის ღილაკი, რომელიც მენიუს შლის */
+#kc-current-locale-link {
+    display: none !important;
+}
+
+/* აიძულე სია, რომ იყოს ჰორიზონტალური და ყოველთვის ღია */
+#kc-locale-wrapper ul {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: flex-end !important; /* მარჯვნივ გადაწევა */
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 0 15px 0 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: static !important;
+    background: none !important;
+    box-shadow: none !important;
+}
+
+#kc-locale-wrapper ul li {
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+/* დახრილი ხაზი GEO \ ENG */
+#kc-locale-wrapper ul li:not(:last-child):after {
+    content: " \ " !important;
+    margin: 0 8px !important;
+    color: #999 !important;
+    font-weight: normal !important;
+}
+
+/* ლინკების სტილი */
+#kc-locale-wrapper ul li a {
+    color: #004a99 !important;
+    font-weight: bold !important;
+    text-transform: uppercase !important;
+    text-decoration: none !important;
+    font-size: 13px !important;
+}
+
+/* 4. ღილაკი */
+#kc-login {
+    background: #004a99 !important;
+    border: none !important;
+    height: 46px !important;
+    font-weight: bold !important;
+    margin-top: 10px !important;
+}

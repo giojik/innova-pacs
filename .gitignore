@@ -1,0 +1,10 @@
+.env
+configuration/certs/
+*.pem
+*.key
+storage/
+*.csv
+__pycache__/
+*.pyc
+Viewers/
+*.zip

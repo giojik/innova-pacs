@@ -1,0 +1,10 @@
+---------------------------------------------------------
+This software makes use of the following open source libraries:
+
+OpenJPEG - http://www.openjpeg.org/
+libJPEG - http://www.ijg.org/
+CharLS - https://github.com/team-charls/charls/
+Minizip - https://github.com/nmoinvaz/minizip/
+CrashRpt - https://sourceforge.net/projects/crashrpt/
+AES/SHA - https://github.com/BrianGladman/
+---------------------------------------------------------

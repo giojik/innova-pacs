@@ -1,0 +1,150 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout  65;
+
+       
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    set_real_ip_from 104.16.0.0/13;
+    set_real_ip_from 108.162.192.0/18;
+    set_real_ip_from 131.0.72.0/22;
+    set_real_ip_from 141.101.64.0/18;
+    set_real_ip_from 162.158.0.0/15;
+    set_real_ip_from 172.64.0.0/13;
+    set_real_ip_from 173.245.48.0/20;
+    set_real_ip_from 188.114.96.0/20;
+    set_real_ip_from 190.93.240.0/20;
+    set_real_ip_from 197.234.240.0/22;
+    set_real_ip_from 198.41.128.0/17;
+    
+    map $http_cf_ipcountry $allowed_country {
+        default no;
+        "" yes; # თუ ჰედერი ცარიელია (ლოკალური ქსელი), დაუშვი
+        GE yes; # საქართველო
+        DE yes; # გერმანია
+        FR yes; # საფრანგეთი
+        NL yes; # ჰოლანდია
+    }
+    
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+    error_log   /var/log/nginx/error.log debug;
+
+    server {
+        listen 80;
+        server_name ris.innovamedical.ge;
+        return 301 https://$host$request_uri;
+    }
+
+    server {
+        listen 443 ssl;
+        server_name ris.innovamedical.ge;
+
+        if ($allowed_country = no) {
+            return 403;
+        }
+
+        ssl_certificate /etc/nginx/certs/live/ris.innovamedical.ge/fullchain.pem;
+        ssl_certificate_key /etc/nginx/certs/live/ris.innovamedical.ge/privkey.pem;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+
+        # 1. OHIF Viewer (ღიაა ყველასთვის)
+        location / {
+            proxy_pass http://pacs-ohif:80;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Accept-Encoding ""; 
+            sub_filter '</body>' '<script src="/share-button.js"></script></body>';
+            sub_filter_once on;
+        }
+
+        # 2. Keycloak-ის ადმინ პანელი (დაბლოკილია)
+        location /admin/ {
+            allow 192.168.20.0/24;
+            allow 10.10.0.0/23;
+            allow 10.10.4.0/23;
+            allow 10.10.14.0/23;
+            allow 10.10.6.0/23;
+            deny all;
+            proxy_pass http://pacs-keycloak:8080/admin/;
+        }
+
+        # 3. Keycloak Master Realm (ადმინის ლოგინი - დაბლოკილია)
+        location /realms/master/ {
+            allow 192.168.20.0/24;
+            allow 10.10.0.0/23;
+            allow 10.10.4.0/23;
+            allow 10.10.14.0/23;
+            allow 10.10.6.0/23;
+            deny all;
+            proxy_pass http://pacs-keycloak:8080/realms/master/;
+        }
+
+        # 4. DCM4CHEE-ს ადმინ პანელი (UI - დაბლოკილია)
+        location /dcm4chee-arc/ui2/ {
+            allow 192.168.20.0/24;
+            allow 10.10.0.0/23;
+            allow 10.10.4.0/23;
+            allow 10.10.14.0/23;
+            allow 10.10.6.0/23;
+            deny all;
+            proxy_pass http://pacs-arc:8080/dcm4chee-arc/ui2/;
+        }
+
+        # 5. DCM4CHEE-ს API (ეს აუცილებლად ღია უნდა იყოს!)
+        location /dcm4chee-arc/ {
+            proxy_pass http://pacs-arc:8080/dcm4chee-arc/;
+            client_max_body_size 0; 
+            proxy_connect_timeout 600;
+            proxy_read_timeout 600;
+            proxy_buffering off;
+        }
+
+        # 6. Keycloak საჯარო მისამართები (ღიაა ყველასთვის)
+        location /realms/ {
+            proxy_pass http://pacs-keycloak:8080/realms/;
+        }
+        
+        location /resources/ {
+            proxy_pass http://pacs-keycloak:8080/resources/;
+        }
+
+        location /js/ {
+            proxy_pass http://pacs-keycloak:8080/js/;
+        }
+        location = /share-button.js {
+            alias /etc/nginx/scripts/share-button.js;
+        }
+        
+        # 1. პაციენტის პორტალი (Python-ზე)
+        location /p/ {
+            proxy_pass http://pacs-portal:8000/p/;
+            proxy_set_header Host $host;
+        }
+
+        # 2. OHIF-ის გახსნა პაციენტისთვის (Keycloak-ის გვერდის ავლით)
+        # ეს ლოგიკა დაუშვებს მხოლოდ იმ UID-ს, რომელიც ვერიფიცირებულია
+        location /viewer {
+             # თუ მომხმარებელი პაციენტია, ჩვენ ვუშვებთ მას Keycloak-ის გარეშე
+             # (შენიშვნა: OHIF-ს დაჭირდება დამატებითი კონფიგურაცია საჯარო წვდომისთვის)
+             proxy_pass http://pacs-ohif:80;
+        }
+    }
+}

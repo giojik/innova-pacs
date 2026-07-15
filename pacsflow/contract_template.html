@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Georgian:wght@300;400;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Noto Sans Georgian', sans-serif; font-size: 13px;
+         color: #1a1a2e; background: white; line-height: 1.7; }
+  .page { max-width: 800px; margin: 0 auto; padding: 60px 70px; }
+  .header { text-align: center; border-bottom: 2px solid #0a0f1e; padding-bottom: 24px; margin-bottom: 32px; }
+  .logo { font-size: 28px; font-weight: 700; color: #0a0f1e; letter-spacing: -1px; }
+  .logo span { color: #0ea5e9; }
+  .doc-title { font-size: 18px; font-weight: 700; margin: 12px 0 4px; color: #0a0f1e; }
+  .doc-meta { font-size: 11px; color: #64748b; }
+  h2 { font-size: 13px; font-weight: 700; color: #0a0f1e; margin: 28px 0 10px;
+       text-transform: uppercase; letter-spacing: 1px; border-left: 3px solid #0ea5e9;
+       padding-left: 10px; }
+  p { margin-bottom: 10px; color: #374151; }
+  .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin: 24px 0; }
+  .party-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; }
+  .party-title { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;
+                 letter-spacing: 1.5px; margin-bottom: 10px; }
+  .field-row { display: flex; gap: 8px; margin-bottom: 6px; }
+  .field-label { font-size: 11px; color: #64748b; min-width: 90px; }
+  .field-val { font-size: 12px; font-weight: 600; color: #0a0f1e;
+               border-bottom: 1px solid #cbd5e1; flex: 1; min-height: 18px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+  thead th { background: #0a0f1e; color: white; padding: 10px 12px; text-align: left;
+             font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  .highlight { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+               padding: 14px 18px; margin: 16px 0; }
+  .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 50px; }
+  .sig-box { border-top: 1px solid #0a0f1e; padding-top: 10px; }
+  .sig-title { font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;
+               letter-spacing: 1px; margin-bottom: 6px; }
+  .sig-line { border-bottom: 1px solid #94a3b8; height: 36px; margin-bottom: 6px; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+            display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8; }
+  .page-num { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="logo">NX<span>RAD</span></div>
+    <div class="doc-title">PACS სისტემის ლიცენზიისა და მომსახურების ხელშეკრულება</div>
+    <div class="doc-meta">
+      ხელშეკრულება №: <strong>NXR-{{CONTRACT_NO}}</strong> &nbsp;|&nbsp;
+      თარიღი: <strong>{{DATE}}</strong>
+    </div>
+  </div>
+
+  <!-- მხარეები -->
+  <h2>მხარეები</h2>
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-title">🏢 სერვისის მიმწოდებელი</div>
+      <div class="field-row"><span class="field-label">კომპანია:</span>
+        <span class="field-val">Innova Medical Center / PacsFlow</span></div>
+      <div class="field-row"><span class="field-label">მისამართი:</span>
+        <span class="field-val">ქ. თბილისი, საქართველო</span></div>
+      <div class="field-row"><span class="field-label">Email:</span>
+        <span class="field-val">info@innovamedical.ge</span></div>
+      <div class="field-row"><span class="field-label">ს/კ:</span>
+        <span class="field-val">{{VENDOR_TIN}}</span></div>
+    </div>
+    <div class="party-box">
+      <div class="party-title">🏥 კლიენტი</div>
+      <div class="field-row"><span class="field-label">კომპანია:</span>
+        <span class="field-val">{{CLIENT_NAME}}</span></div>
+      <div class="field-row"><span class="field-label">მისამართი:</span>
+        <span class="field-val">{{CLIENT_ADDRESS}}</span></div>
+      <div class="field-row"><span class="field-label">Email:</span>
+        <span class="field-val">{{CLIENT_EMAIL}}</span></div>
+      <div class="field-row"><span class="field-label">ს/კ:</span>
+        <span class="field-val">{{CLIENT_TIN}}</span></div>
+    </div>
+  </div>
+
+  <!-- 1. საგანი -->
+  <h2>1. ხელშეკრულების საგანი</h2>
+  <p>
+    წინამდებარე ხელშეკრულების საფუძველზე, სერვისის მიმწოდებელი კლიენტს გადასცემს
+    <strong>PacsFlow PACS</strong> სისტემის გამოყენების უფლებას (ლიცენზიას) და
+    უზრუნველყოფს სისტემის ინსტალაციას, კონფიგურაციასა და ტექნიკური მხარდაჭერის
+    მომსახურებას ქვემოთ მითითებული პირობებით.
+  </p>
+
+  <!-- 2. პაკეტი -->
+  <h2>2. სალიცენზიო პაკეტი</h2>
+  <table>
+    <thead>
+      <tr><th>პარამეტრი</th><th>მნიშვნელობა</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>პაკეტი</td><td><strong>{{PLAN_NAME}}</strong></td></tr>
+      <tr><td>ლიცენზიის ვადა</td><td>{{LICENSE_START}} — {{LICENSE_END}}</td></tr>
+      <tr><td>AE Title ლიმიტი</td><td>{{AE_LIMIT}} მოდალობა</td></tr>
+      <tr><td>ჩართული მოდულები</td><td>{{MODULES_LIST}}</td></tr>
+      <tr><td>სერვერის დომეინი</td><td>{{DOMAIN}}</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 3. ღირებულება -->
+  <h2>3. ღირებულება და გადახდის წესი</h2>
+  <table>
+    <thead>
+      <tr><th>მომსახურება</th><th>ოდენობა</th><th>სიხშირე</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ინსტალაცია და კონფიგურაცია</td><td>{{INSTALL_PRICE}} ₾</td><td>ერთჯერადი</td></tr>
+      <tr><td>სალიცენზიო გადასახადი</td><td>{{LICENSE_PRICE}} ₾</td><td>{{PAYMENT_PERIOD}}</td></tr>
+      <tr><td>ტექნიკური მხარდაჭერა</td><td>{{SUPPORT_PRICE}} ₾</td><td>{{SUPPORT_PERIOD}}</td></tr>
+    </tbody>
+  </table>
+  <div class="highlight">
+    <strong>სულ ჯამი პირველი წლისთვის: {{TOTAL_FIRST_YEAR}} ₾</strong><br>
+    გადახდა: ბანკური გადარიცხვა. ინვოისი გამოიწერება 30 კალენდარული დღით ადრე.
+  </div>
+
+  <!-- 4. მომსახურება -->
+  <h2>4. მომსახურების პირობები</h2>
+  <p><strong>4.1 ინსტალაცია:</strong> სერვისის მიმწოდებელი ვალდებულია განახორციელოს
+  სისტემის ინსტალაცია და კონფიგურაცია ხელშეკრულების გაფორმებიდან <strong>5 სამუშაო
+  დღის</strong> ვადაში.</p>
+  <p><strong>4.2 ტექნიკური მხარდაჭერა:</strong> კრიტიკულ შეფერხებებზე რეაგირების დრო —
+  <strong>4 საათი</strong> სამუშაო დღეებში (09:00–18:00). არაკრიტიკული — 24 საათი.</p>
+  <p><strong>4.3 განახლებები:</strong> ლიცენზიის ვადაში კლიენტი იღებს ყველა minor
+  განახლებას (bug fixes, security patches) უფასოდ.</p>
+  <p><strong>4.4 Data backup:</strong> კლიენტი პასუხისმგებელია DICOM მონაცემების
+  სარეზერვო ასლებზე. სერვისის მიმწოდებელი პასუხს არ აგებს მონაცემთა დაკარგვაზე.</p>
+
+  <!-- 5. კონფიდენციალობა -->
+  <h2>5. კონფიდენციალობა და მონაცემთა დაცვა</h2>
+  <p>მხარეები ვალდებულნი არიან დაიცვან სამედიცინო მონაცემების კონფიდენციალობა
+  საქართველოს კანონმდებლობის ("პერსონალური მონაცემების დაცვის შესახებ" კანონი)
+  შესაბამისად. სერვისის მიმწოდებელი არ იყენებს კლიენტის DICOM მონაცემებს
+  სხვა მიზნებისთვის.</p>
+
+  <!-- 6. შეწყვეტა -->
+  <h2>6. ხელშეკრულების შეწყვეტა</h2>
+  <p><strong>6.1</strong> ნებისმიერ მხარეს უფლება აქვს შეწყვიტოს ხელშეკრულება
+  <strong>30 კალენდარული დღით</strong> წინასწარ გაფრთხილებით.</p>
+  <p><strong>6.2</strong> გადახდის ვალდებულების შეუსრულებლობის შემთხვევაში
+  სერვისის მიმწოდებელი უფლებამოსილია <strong>15 დღის</strong> შემდეგ
+  გააუქმოს ლიცენზია.</p>
+  <p><strong>6.3</strong> ხელშეკრულების შეწყვეტის შემთხვევაში კლიენტი ვალდებულია
+  წაშალოს სისტემა ან შეწყვიტოს მისი გამოყენება.</p>
+
+  <!-- ხელმოწერები -->
+  <div class="signatures">
+    <div class="sig-box">
+      <div class="sig-title">სერვისის მიმწოდებელი</div>
+      <div class="sig-line"></div>
+      <p style="font-size:11px;color:#64748b;">სახელი: _____________________</p>
+      <p style="font-size:11px;color:#64748b;">თანამდებობა: ________________</p>
+      <p style="font-size:11px;color:#64748b;">თარიღი: _____________________</p>
+      <p style="font-size:11px;color:#64748b;margin-top:8px;">ბ.ა.</p>
+    </div>
+    <div class="sig-box">
+      <div class="sig-title">კლიენტი</div>
+      <div class="sig-line"></div>
+      <p style="font-size:11px;color:#64748b;">სახელი: _____________________</p>
+      <p style="font-size:11px;color:#64748b;">თანამდებობა: ________________</p>
+      <p style="font-size:11px;color:#64748b;">თარიღი: _____________________</p>
+      <p style="font-size:11px;color:#64748b;margin-top:8px;">ბ.ა.</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>PacsFlow / Innova Medical Center — pacsflow.innovamedical.ge</span>
+    <span>კონფიდენციალური დოკუმენტი — გვ. 1/1</span>
+  </div>
+
+</div>
+</body>
+</html>

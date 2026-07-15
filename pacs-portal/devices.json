@@ -1,0 +1,14 @@
+{
+  "ae_titles": [
+    { "ae": "CT_INNOVA1",  "label": "CT — Innova (სკანერი 1)",       "modality": "CT" },
+    { "ae": "CT_INNOVA2",  "label": "CT — Innova (სკანერი 2)",       "modality": "CT" },
+    { "ae": "MR_INNOVA",   "label": "MRI — Innova",                   "modality": "MR" },
+    { "ae": "US_INNOVA1",  "label": "УЗИ — Innova (კაბინეტი 1)",     "modality": "US" },
+    { "ae": "US_INNOVA2",  "label": "УЗИ — Innova (კაბინეტი 2)",     "modality": "US" },
+    { "ae": "RF_INNOVA",   "label": "RF — რენტგენი / ფლუოროსკოპი",  "modality": "RF" },
+    { "ae": "CR_INNOVA",   "label": "CR — კრენტგენი",                "modality": "CR" },
+    { "ae": "DX_INNOVA",   "label": "DX — დენსიტომეტრი",             "modality": "DX" },
+    { "ae": "ES_INNOVA",   "label": "ES — ენდოსკოპი",                "modality": "ES" },
+    { "ae": "XA_INNOVA",   "label": "XA — ანგიოგრაფი",               "modality": "XA" }
+  ]
+}

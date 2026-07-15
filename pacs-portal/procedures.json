@@ -1,0 +1,53 @@
+{
+  "procedures": [
+    { "code": "CT-CHEST",        "label": "CT — მკერდის ღრუ",                         "modality": "CT" },
+    { "code": "CT-CHEST-CON",    "label": "CT — მკერდის ღრუ კონტრასტით",             "modality": "CT" },
+    { "code": "CT-ABD",          "label": "CT — მუცლის ღრუ",                          "modality": "CT" },
+    { "code": "CT-ABD-CON",      "label": "CT — მუცლის ღრუ კონტრასტით",              "modality": "CT" },
+    { "code": "CT-HEAD",         "label": "CT — თავის ტვინი",                         "modality": "CT" },
+    { "code": "CT-HEAD-CON",     "label": "CT — თავის ტვინი კონტრასტით",             "modality": "CT" },
+    { "code": "CT-SPINE-C",      "label": "CT — საშვილოსნო ხერხემალი (C)",           "modality": "CT" },
+    { "code": "CT-SPINE-L",      "label": "CT — წელის ხერხემალი (L)",                "modality": "CT" },
+    { "code": "CT-PELVIS",       "label": "CT — მენჯის ღრუ",                         "modality": "CT" },
+    { "code": "CT-ANGIO",        "label": "CT ანგიოგრაფია",                           "modality": "CT" },
+
+    { "code": "MR-HEAD",         "label": "MRI — თავის ტვინი",                        "modality": "MR" },
+    { "code": "MR-HEAD-CON",     "label": "MRI — თავის ტვინი კონტრასტით",            "modality": "MR" },
+    { "code": "MR-SPINE-C",      "label": "MRI — საშვილოსნო ხერხემალი (C)",          "modality": "MR" },
+    { "code": "MR-SPINE-T",      "label": "MRI — გულმკერდის ხერხემალი (T)",          "modality": "MR" },
+    { "code": "MR-SPINE-L",      "label": "MRI — წელის ხერხემალი (L)",               "modality": "MR" },
+    { "code": "MR-ABD",          "label": "MRI — მუცლის ღრუ",                        "modality": "MR" },
+    { "code": "MR-PELVIS",       "label": "MRI — მენჯის ღრუ",                        "modality": "MR" },
+    { "code": "MR-KNEE",         "label": "MRI — მუხლი",                             "modality": "MR" },
+    { "code": "MR-SHOULDER",     "label": "MRI — მხარი",                             "modality": "MR" },
+    { "code": "MR-ANGIO",        "label": "MRI ანგიოგრაფია",                         "modality": "MR" },
+
+    { "code": "US-ABD",          "label": "УЗИ — მუცლის ღრუ",                        "modality": "US" },
+    { "code": "US-THYROID",      "label": "УЗИ — ფარისებრი ჯირკვალი",               "modality": "US" },
+    { "code": "US-HEART",        "label": "УЗИ — გული (ექოკარდიოგრაფია)",           "modality": "US" },
+    { "code": "US-PELVIS",       "label": "УЗИ — მენჯის ღრუ",                       "modality": "US" },
+    { "code": "US-VESSELS",      "label": "УЗИ — სისხლძარღვები (დოპლერი)",         "modality": "US" },
+    { "code": "US-BREAST",       "label": "УЗИ — მკერდის ჯირკვლები",               "modality": "US" },
+    { "code": "US-KIDNEY",       "label": "УЗИ — თირკმელები",                       "modality": "US" },
+    { "code": "US-OB",           "label": "УЗИ — მეანობა",                          "modality": "US" },
+
+    { "code": "RF-ESOPHAGUS",    "label": "RF — საყლაპავი / კუჭი (ბარიუმი)",       "modality": "RF" },
+    { "code": "RF-COLON",        "label": "RF — მსხვილი ნაწლავი",                   "modality": "RF" },
+    { "code": "RF-CHEST",        "label": "RF — მკერდის ღრუ ფლუოროსკოპია",         "modality": "RF" },
+
+    { "code": "CR-CHEST",        "label": "რენტგენი — მკერდის ღრუ",                 "modality": "CR" },
+    { "code": "CR-SPINE",        "label": "რენტგენი — ხერხემალი",                   "modality": "CR" },
+    { "code": "CR-EXTREMITY",    "label": "რენტგენი — კიდური",                      "modality": "CR" },
+    { "code": "CR-PELVIS",       "label": "რენტგენი — მენჯი",                       "modality": "CR" },
+
+    { "code": "DX-DENSITO",      "label": "დენსიტომეტრია (DEXA)",                   "modality": "DX" },
+
+    { "code": "ES-GASTRO",       "label": "გასტროსკოპია (EGDS)",                    "modality": "ES" },
+    { "code": "ES-COLON",        "label": "კოლონოსკოპია",                           "modality": "ES" },
+    { "code": "ES-BRONCHO",      "label": "ბრონქოსკოპია",                           "modality": "ES" },
+
+    { "code": "XA-ANGIO-HEAD",   "label": "XA — თავის ანგიოგრაფია",                "modality": "XA" },
+    { "code": "XA-ANGIO-HEART",  "label": "XA — კარდიოანგიოგრაფია",               "modality": "XA" },
+    { "code": "XA-ANGIO-PERIPH", "label": "XA — პერიფერული ანგიოგრაფია",          "modality": "XA" }
+  ]
+}
