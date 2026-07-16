@@ -716,6 +716,118 @@ async def doctor_worklist(
                 upFiles = files;
             }}
             renderFileList();
+            previewDicomFromSelection();
+        }}
+
+        // ── DICOM header-ის სწრაფი წაკითხვა ბრაუზერში (preview-სთვის) ──────────
+        async function parseDicomPreview(file) {{
+            try {{
+                const buf   = await file.slice(0, 131072).arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                const view  = new DataView(buf);
+                const hasPreamble = bytes.length > 132 &&
+                    bytes[128]===0x44 && bytes[129]===0x49 && bytes[130]===0x43 && bytes[131]===0x4D;
+                const offset = hasPreamble ? 132 : 0;
+
+                function u16(p) {{ return view.getUint16(p, true); }}
+                function u32(p) {{ return view.getUint32(p, true); }}
+                function toStr(entryBytes) {{
+                    if (!entryBytes) return '';
+                    return new TextDecoder('latin1').decode(entryBytes).replace(/\\x00+$/,'').trim();
+                }}
+
+                const LONG_VR = new Set(["OB","OW","SQ","UC","UN","UR","UT","OD","OF","OL","SV","UV"]);
+
+                function parseExplicit(pos, end) {{
+                    const out = {{}};
+                    while (pos + 8 <= end) {{
+                        const group = u16(pos), element = u16(pos+2);
+                        const vr = String.fromCharCode(bytes[pos+4], bytes[pos+5]);
+                        let len, valStart;
+                        if (LONG_VR.has(vr)) {{ len = u32(pos+8); valStart = pos+12; }}
+                        else                 {{ len = u16(pos+6); valStart = pos+8;  }}
+                        if (len === 0xFFFFFFFF || len < 0) break;
+                        const valEnd = valStart + len;
+                        if (valEnd > end || valEnd > bytes.length) break;
+                        out[group.toString(16).padStart(4,'0') + ',' + element.toString(16).padStart(4,'0')] =
+                            bytes.slice(valStart, valEnd);
+                        pos = valEnd + (valEnd % 2);
+                    }}
+                    return out;
+                }}
+
+                function parseImplicit(pos, end) {{
+                    const out = {{}};
+                    while (pos + 8 <= end) {{
+                        const group = u16(pos), element = u16(pos+2);
+                        const len = u32(pos+4);
+                        const valStart = pos+8;
+                        if (len === 0xFFFFFFFF || len < 0) break;
+                        const valEnd = valStart + len;
+                        if (valEnd > end || valEnd > bytes.length) break;
+                        out[group.toString(16).padStart(4,'0') + ',' + element.toString(16).padStart(4,'0')] =
+                            bytes.slice(valStart, valEnd);
+                        pos = valEnd + (valEnd % 2);
+                    }}
+                    return out;
+                }}
+
+                let transferSyntax = "1.2.840.10008.1.2.1";
+                let metaEnd = null;
+                if (offset + 12 <= bytes.length && u16(offset) === 0x0002 && u16(offset+2) === 0x0000) {{
+                    const groupLen = u32(offset+8);
+                    metaEnd = offset + 12 + groupLen;
+                }}
+                if (metaEnd) {{
+                    const meta = parseExplicit(offset, Math.min(metaEnd, bytes.length));
+                    const ts = toStr(meta['0002,0010']);
+                    if (ts) transferSyntax = ts;
+                }}
+
+                const dsStart    = metaEnd || offset;
+                const isImplicit = transferSyntax.replace(/\\x00+$/,'').trim() === "1.2.840.10008.1.2";
+                const ds = isImplicit ? parseImplicit(dsStart, bytes.length) : parseExplicit(dsStart, bytes.length);
+
+                return {{
+                    name: toStr(ds['0010,0010']).replace('^', ' ').trim(),
+                    pid:  toStr(ds['0010,0020']),
+                    desc: toStr(ds['0008,1030']),
+                    date: toStr(ds['0008,0020']),
+                }};
+            }} catch (e) {{
+                console.warn('DICOM preview parse failed:', e);
+                return null;
+            }}
+        }}
+
+        async function previewDicomFromSelection() {{
+            const el = document.getElementById('up-dicom-preview');
+            el.innerHTML = '';
+            const candidate = upFiles.find(f => f.name.toLowerCase().endsWith('.dcm')) ||
+                               upFiles.find(f => !f.name.toLowerCase().match(/\\.(zip|iso)$/));
+            if (!candidate) return;
+
+            const info = await parseDicomPreview(candidate);
+            if (!info || (!info.name && !info.pid)) {{
+                el.innerHTML = `<div style="background:#fef9c3;border:1px solid #fde047;border-radius:10px;
+                            padding:10px 14px;font-size:12px;color:#854d0e;">
+                            ⚠️ ფაილიდან პაციენტის მონაცემები ვერ ამოვიცანით — შესაძლოა DICOM ტეგები აკლია.
+                            ატვირთვას მაინც შეგიძლიათ სცადოთ.</div>`;
+                return;
+            }}
+            el.innerHTML = `
+              <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
+                          padding:10px 14px;font-size:12px;color:#1e40af;">
+                📋 ამოცნობილია: <b>${{info.name || '—'}}</b>
+                ${{info.pid  ? ' · ID: <b>' + info.pid + '</b>'  : ''}}
+                ${{info.date ? ' · ' + info.date.slice(0,4) + '-' + info.date.slice(4,6) + '-' + info.date.slice(6,8) : ''}}
+                ${{info.desc ? ' · ' + info.desc : ''}}
+              </div>`;
+
+            const pidInput = document.getElementById('up-pid');
+            if (pidInput && !pidInput.value.trim() && info.pid) {{
+                pidInput.value = info.pid;
+            }}
         }}
 
         function renderFileList() {{
@@ -1202,6 +1314,7 @@ async def doctor_worklist(
 
             <!-- ფაილების სია / progress -->
             <div id="up-filelist" style="margin-bottom:14px;"></div>
+            <div id="up-dicom-preview" style="margin-bottom:14px;"></div>
 
             <!-- პაციენტის ID -->
             <div style="margin-bottom:14px;">
@@ -1555,54 +1668,37 @@ async def verify_patient(uid: str = Form(...), pid: str = Form(...),
 # .dcm, ZIP, ISO, ფოლდერი — DICOMDIR საჭირო არ არის
 # ══════════════════════════════════════════════════════════════
 import zipfile, io, struct, csv as _csv, os as _os
+import pydicom
 
 def _parse_dicom_meta(data: bytes) -> dict:
-    """DICOM ფაილიდან სწრაფი header წაკითხვა (pydicom-ის გარეშე)."""
+    """
+    DICOM ფაილიდან header-ის წაკითხვა pydicom-ით.
+    ძველი, ხელით დაწერილი byte-level parser მხოლოდ Explicit VR-ს უმხარდაჭერდა —
+    Implicit VR Little Endian ფაილებში (ბევრი ძველი CT/MR/US მოწყობილობის default
+    ფორმატი) ტეგები საერთოდ არასწორად იკითხებოდა. pydicom სამივე ტრანსფერ-სინტაქსს
+    (Implicit/Explicit Little/Big Endian) სწორად ამუშავებს.
+    """
     result = {}
-    if len(data) < 132:
+    try:
+        ds = pydicom.dcmread(io.BytesIO(data), stop_before_pixels=True, force=True)
+    except Exception:
         return result
-    offset = 132 if data[128:132] == b'DICM' else 0
-    _TAGS = {
-        (0x0010,0x0010): "PatientName",
-        (0x0010,0x0020): "PatientID",
-        (0x0010,0x0030): "PatientBirthDate",
-        (0x0008,0x0020): "StudyDate",
-        (0x0008,0x0060): "Modality",
-        (0x0008,0x1030): "StudyDescription",
-        (0x0008,0x0050): "AccessionNumber",
-        (0x0020,0x000D): "StudyInstanceUID",
-        (0x0020,0x000E): "SeriesInstanceUID",
-        (0x0008,0x0080): "InstitutionName",
-    }
-    _LONG = {"OB","OW","SQ","UC","UN","UR","UT","OD","OF","OL","SV","UV"}
-    _VRS  = {"AE","AS","AT","CS","DA","DS","DT","FL","FD","IS","LO","LT",
-              "OB","OD","OF","OL","OW","PN","SH","SL","SQ","SS","ST","SV",
-              "TM","UC","UI","UL","UN","UR","US","UT","UV"}
-    pos = offset
-    while pos + 8 <= len(data) and len(result) < 12:
+
+    _FIELDS = [
+        "PatientName", "PatientID", "PatientBirthDate", "StudyDate",
+        "Modality", "StudyDescription", "AccessionNumber",
+        "StudyInstanceUID", "SeriesInstanceUID", "InstitutionName",
+    ]
+    for field in _FIELDS:
         try:
-            g  = int.from_bytes(data[pos:pos+2],   "little")
-            e  = int.from_bytes(data[pos+2:pos+4], "little")
-            vr = data[pos+4:pos+6].decode("ascii", errors="replace")
-            if vr in _VRS:
-                if vr in _LONG:
-                    ln = int.from_bytes(data[pos+8:pos+12], "little"); vs = pos+12
-                else:
-                    ln = int.from_bytes(data[pos+6:pos+8], "little"); vs = pos+8
-            else:
-                ln = int.from_bytes(data[pos+4:pos+8], "little"); vs = pos+8
-            if ln in (0xFFFFFFFF, 0xFFFFFFFE) or ln < 0:
-                pos += 8; continue
-            ve = vs + ln
-            if ve > len(data): break
-            tag = (g, e)
-            if tag in _TAGS:
-                val = data[vs:ve].decode("latin-1", errors="ignore").strip().rstrip("\x00").strip()
-                if val:
-                    result[_TAGS[tag]] = val
-            pos = ve + (ve % 2)
-        except:
-            pos += 2
+            val = getattr(ds, field, None)
+            if val is None:
+                continue
+            val = str(val).strip()
+            if val:
+                result[field] = val
+        except Exception:
+            continue
     return result
 
 
@@ -1723,7 +1819,10 @@ async def upload_submit(
         return JSONResponse({"status": "error", "detail": "Unauthorized"}, status_code=401)
 
     try:
-        form         = await request.form()
+        # Starlette-ის request.form()-ს აქვს ნაგულისხმევი 1000 ფაილის/ველის ლიმიტი
+        # (DoS-დაცვისთვის) — ეს ბლოკავდა დიდი კვლევების (thin-slice CT — ხშირად
+        # 1000+ სურათი) ატვირთვას. ლიმიტი გაზრდილია, რომ რეალურ საჭიროებას მოერგოს.
+        form         = await request.form(max_files=20000, max_fields=20000)
         files        = form.getlist("files")
         source       = str(form.get("source",       "")).strip()
         override_pid = str(form.get("override_pid", "")).strip()
