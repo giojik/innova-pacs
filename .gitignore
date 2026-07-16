@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 Viewers/
 *.zip
+pacs-portal/live_sync_active.json
