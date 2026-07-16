@@ -18,7 +18,9 @@ RUN pip install --no-cache-dir \
     uvicorn \
     python-multipart \
     psycopg2-binary \
-    qrcode
+    qrcode \
+    pyjwt \
+    cryptography
 
 # 3. კოდის კოპირება
 COPY . .

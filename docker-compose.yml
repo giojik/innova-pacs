@@ -180,6 +180,9 @@ services:
       - OLD_CLIENT_ID=${OLD_CLIENT_ID}
       - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
     volumes:
       - ./pacs-portal/share_logs.csv:/app/share_logs.csv
       - ./pacs-portal/migration_status.txt:/app/migration_status.txt
@@ -188,47 +191,6 @@ services:
       - ./pacs-portal/live_sync_active.json:/app/live_sync_active.json
       - ./pacs-portal/live_sync_status.txt:/app/live_sync_status.txt
       - ./pacs-portal/static:/app/static
-    networks:
-      - pacs-net
-    depends_on:
-      - arc
-
-  # 2. დღის სინქრონიზაცია (Port 8001)
-  pacs-sync-live:
-    build: ./pacs-portal
-    container_name: pacs-sync-live
-    command: uvicorn live_sync:app --host 0.0.0.0 --port 8001
-    restart: always
-    environment:
-      - AE_TITLE=${AE_TITLE}
-      - OLD_PACS_URL=${OLD_PACS_URL}
-      - OLD_KEYCLOAK_URL=${OLD_KEYCLOAK_URL}
-      - OLD_CLIENT_ID=${OLD_CLIENT_ID}
-      - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
-    volumes:
-      - ./pacs-portal/live_sync_active.json:/app/live_sync_active.json
-      - ./pacs-portal/live_sync_status.txt:/app/live_sync_status.txt
-    networks:
-      - pacs-net
-    depends_on:
-      - arc
-
-  # 3. ღამის მიგრაცია (ფონური პროცესი)
-  pacs-migrator:
-    build: ./pacs-portal
-    container_name: pacs-migrator
-    command: python migrator.py
-    restart: always
-    environment:
-      - AE_TITLE=${AE_TITLE}
-      - OLD_PACS_URL=${OLD_PACS_URL}
-      - OLD_KEYCLOAK_URL=${OLD_KEYCLOAK_URL}
-      - OLD_CLIENT_ID=${OLD_CLIENT_ID}
-      - OLD_CLIENT_SECRET=${OLD_CLIENT_SECRET}
-    volumes:
-      - ./pacs-portal/migrated_uids.txt:/app/migrated_uids.txt
-      - ./pacs-portal/migration_status.txt:/app/migration_status.txt
-      - ./pacs-portal/active_transfers.json:/app/active_transfers.json
     networks:
       - pacs-net
     depends_on:

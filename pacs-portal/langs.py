@@ -32,7 +32,11 @@ LANGS = {
         "mod_all":          "ყველა",
         "date_from":        "დან",
         "date_to":          "მდე",
+        "date_placeholder": "დდ.თთ.წწწწ",
         "search_btn":       "ძებნა",
+        "pname":            "სახელი გვარი",
+        "pname_ph":         "მაგ: გვარი სახელი",
+        "date_range_err":   'შეცდომა: „დან“ თარიღი „მდე“ თარიღზე გვიან არ უნდა იყოს — გთხოვთ, გაასწოროთ.',
 
         # სწრაფი ფილტრები
         "qf_label":         "⚡ სწრაფი:",
@@ -114,7 +118,11 @@ LANGS = {
         "mod_all":          "All",
         "date_from":        "From",
         "date_to":          "To",
+        "date_placeholder": "DD.MM.YYYY",
         "search_btn":       "Search",
+        "pname":            "Full Name",
+        "pname_ph":         "e.g: Last First",
+        "date_range_err":   "Error: the 'From' date must not be later than the 'To' date — please fix it.",
 
         # Quick filters
         "qf_label":         "⚡ Quick:",

@@ -25,12 +25,45 @@ DARK_BLUE     = "#003366"
 PACS_URL           = f"http://pacs-arc:8080/dcm4chee-arc/aets/{AE_TITLE}/rs"
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 KEYCLOAK_TOKEN_URL = "http://keycloak:8080/realms/dcm4che/protocol/openid-connect/token"
+KEYCLOAK_JWKS_URL  = "http://keycloak:8080/realms/dcm4che/protocol/openid-connect/certs"   # ← ახალი ხაზი
 CLIENT_ID          = "risinnova-ui"
 
+import jwt as _jwt                                   # ← ახალი ბლოკის დასაწყისი
+from jwt import PyJWKClient as _PyJWKClient
+
+_jwks_client = None
+
+def verify_doctor_token(token: str):
+    """
+    ვამოწმებთ doctor_token-ის ხელმოწერას Keycloak-ის public key-ით (JWKS) და ვადას.
+    აბრუნებს decoded claims dict-ს თუ ვალიდურია, წინააღმდეგ შემთხვევაში None.
+    """
+    global _jwks_client
+    if not token:
+        return None
+    try:
+        if _jwks_client is None:
+            _jwks_client = _PyJWKClient(KEYCLOAK_JWKS_URL)
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        claims = _jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+        )
+        return claims
+    except Exception as e:
+        print(f"doctor_token verification failed: {e}")
+        return None
+                                                        # ← ახალი ბლოკის დასასრული
 OLD_PACS_RS       = os.getenv("OLD_PACS_URL")
 OLD_TOKEN_URL     = os.getenv("OLD_KEYCLOAK_URL")
 OLD_CLIENT_ID     = os.getenv("OLD_CLIENT_ID")
 OLD_CLIENT_SECRET = os.getenv("OLD_CLIENT_SECRET")
+
+DB_NAME = os.getenv("DB_NAME", "pacsdb")               # ← ახალი 3 ხაზი
+DB_USER = os.getenv("DB_USER", "pacs")
+DB_PASS = os.getenv("DB_PASS")  # საიდუმლო — მხოლოდ .env/environment-იდან, არასდროს hardcode
 
 PROGRESS_FILE    = "/app/migrated_uids.txt"
 STATUS_FILE      = "/app/migration_status.txt"
@@ -41,7 +74,7 @@ SHARE_LOG_FILE   = "/app/share_logs.csv"
 
 # ==========================================================
 # devices.json   — მოწყობილობები / AE Titles
-# procedures.json — პროცედურები / კვლევების სია
+# procedures.json — პროცედურების სია
 # (რედაქტირება პირდაპირ ამ ფაილებში, restart არ სჭირდება)
 # ==========================================================
 _DEVICES_PATH    = os.path.join(os.path.dirname(__file__), "devices.json")
@@ -190,12 +223,14 @@ def get_old_pacs_token():
 def get_pacs_studies(fname="", lname="", pid="", mod="", d_from="", d_to=""):
     ALLOWED_MODALITIES = ["CT", "MR", "US", "RF", "CR", "ES", "XC", "DX", "XA"]
     try:
-        params = {'includefield': 'all', 'limit': 1000, 'fuzzymatching': 'true'}
+        params = {'includefield': 'all', 'limit': 1000, 'fuzzymatching': 'false'}
         f_search = fname.upper().strip()
         l_search = lname.upper().strip()
-        if f_search and l_search: params['PatientName'] = f"*{l_search}^{f_search}*"
-        elif l_search:             params['PatientName'] = f"*{l_search}*"
-        elif f_search:             params['PatientName'] = f"*{f_search}*"
+        # PACS-ის query-ს განზრახ ვაძლევთ მხოლოდ ერთ სიტყვას (ფართო filter),
+        # რომ თანმიმდევრობაზე (გვარი-სახელი vs სახელი-გვარი) დამოკიდებული არ იყოს —
+        # ორივე სიტყვის ზუსტი დამთხვევა ქვემოთ, ლოკალურ filter-ში მოწმდება, თანმიმდევრობის მიუხედავად
+        if l_search:   params['PatientName'] = f"*{l_search}*"
+        elif f_search: params['PatientName'] = f"*{f_search}*"
         if pid: params['PatientID'] = pid
         if d_from or d_to:
             start = d_from.replace("-", "") if d_from else "20100101"
@@ -215,9 +250,14 @@ def get_pacs_studies(fname="", lname="", pid="", mod="", d_from="", d_to=""):
             if l_search and l_search not in p_name_raw: continue
             if any(m in ALLOWED_MODALITIES for m in m_list):
                 strict_results.append(s)
+
+        def _tag_val(item, tag, default):
+            values = item.get(tag, {}).get("Value") or [default]
+            return values[0] if values else default
+
         strict_results.sort(key=lambda x: (
-            x.get("00080020", {}).get("Value", ["00000000"])[0],
-            x.get("00080030", {}).get("Value", ["000000"])[0]
+            _tag_val(x, "00080020", "00000000"),
+            _tag_val(x, "00080030", "000000")
         ), reverse=True)
         return strict_results
     except:
@@ -277,7 +317,7 @@ async def logout():
 @app.get("/doctor/worklist", response_class=HTMLResponse)
 async def doctor_worklist(
     request:       Request,
-    fname:         str = "", lname: str = "", pid: str = "", mod: str = "",
+    pname:         str = "", pid: str = "", mod: str = "",
     d_from:        str = "", d_to:   str = "", page: int = 1,
     quick:         str = "",
     lang:          str = "ka",
@@ -285,12 +325,21 @@ async def doctor_worklist(
     doc_full_name: str = Cookie("Doctor"),
     ui_lang:       str = Cookie("ka"),
 ):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         return RedirectResponse(url="/login")
 
     # query param > cookie
     if not lang:
         lang = ui_lang or "ka"
+    # ერთი გაერთიანებული "სახელი გვარი" ველიდან fname/lname-ის გამოყოფა
+    # (get_pacs_studies() უცვლელად ელოდება ცალკე fname/lname-ს)
+    name_parts = pname.strip().split(None, 1)
+    if len(name_parts) == 2:
+        lname, fname = name_parts[0], name_parts[1]
+    elif len(name_parts) == 1:
+        lname, fname = name_parts[0], ""
+    else:
+        lname = fname = ""
 
     # სწრაფი ფილტრების თარიღები
     today = datetime.date.today()
@@ -320,8 +369,7 @@ async def doctor_worklist(
 
     def qf_url(q):
         parts = [f"lang={lang}"]
-        if fname: parts.append(f"fname={fname}")
-        if lname: parts.append(f"lname={lname}")
+        if pname: parts.append(f"pname={pname}")
         if pid:   parts.append(f"pid={pid}")
         if mod:   parts.append(f"mod={mod}")
         parts.append(f"quick={q}")
@@ -393,10 +441,10 @@ async def doctor_worklist(
         num_images = str((s.get("00201208", {}).get("Value") or ["—"])[0])
         num_series = str((s.get("00201206", {}).get("Value") or ["—"])[0])
 
-        f_date    = f"{s_date[:4]}-{s_date[4:6]}-{s_date[6:8]}" if len(s_date) == 8 else s_date
+        f_date    = f"{s_date[6:8]}.{s_date[4:6]}.{s_date[:4]}" if len(s_date) == 8 else s_date
         s_time    = str(s_time).split(".")[0]  # წამის ნაწილი მოვაცილოთ
         f_time    = f"{s_time[:2]}:{s_time[2:4]}" if len(s_time) >= 4 else ""
-        f_dob     = f"{p_dob[:4]}-{p_dob[4:6]}-{p_dob[6:8]}"   if len(p_dob)  == 8 else p_dob
+        f_dob     = f"{p_dob[6:8]}.{p_dob[4:6]}.{p_dob[:4]}"   if len(p_dob)  == 8 else p_dob
         safe_name = p_name.replace("'", "\\'")
         hosp_cls  = "" if hospital   != "—" else " empty"
         desc_cls  = "" if study_desc != "—" else " empty"
@@ -468,6 +516,8 @@ async def doctor_worklist(
 
     html = f"""<html><head>{STYLE}
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
     <title>{T(lang,'app_title')}</title></head>
     <body>
         <header>
@@ -486,11 +536,10 @@ async def doctor_worklist(
 
         {quick_bar}
 
-        <form class="search-panel" method="get" action="/doctor/worklist">
+        <form class="search-panel" method="get" action="/doctor/worklist" onsubmit="return validateDateRange()">
             <input type="hidden" name="lang" value="{lang}">
             <a href="/doctor/worklist?lang={lang}" style="position:absolute;top:-10px;right:-10px;background:#ef4444;color:white;width:28px;height:28px;border-radius:50%;text-align:center;line-height:28px;text-decoration:none;font-weight:bold;box-shadow:0 4px 10px rgba(239,68,68,0.3);">✕</a>
-            <div><label>{T(lang,'fname')}</label><input type="text" name="fname" value="{fname}" class="in-input"></div>
-            <div><label>{T(lang,'lname')}</label><input type="text" name="lname" value="{lname}" class="in-input"></div>
+            <div><label>{T(lang,'pname')}</label><input type="text" name="pname" value="{pname}" class="in-input" placeholder="{T(lang,'pname_ph')}"></div>
             <div><label>{T(lang,'pid')}</label><input type="text" name="pid" value="{pid}" class="in-input"></div>
             <div><label>{T(lang,'modality')}</label>
                 <select name="mod" class="in-input">
@@ -506,10 +555,25 @@ async def doctor_worklist(
                     <option value="XA"  {'selected' if mod=='XA'  else ''}>XA</option>
                 </select>
             </div>
-            <div><label>{T(lang,'date_from')}</label><input type="date" name="d_from" value="{{d_from}}" class="in-input"></div>
-            <div><label>{T(lang,'date_to')}</label><input type="date" name="d_to" value="{{d_to}}" class="in-input"></div>
+            <div><label>{T(lang,'date_from')}</label><input type="date" id="d_from_input" name="d_from" value="{d_from}" class="in-input" placeholder="{T(lang,'date_placeholder')}"></div>
+            <div><label>{T(lang,'date_to')}</label><input type="date" id="d_to_input" name="d_to" value="{d_to}" class="in-input" placeholder="{T(lang,'date_placeholder')}"></div>
             <button type="submit" class="btn btn-green" style="height:42px;">{T(lang,'search_btn')}</button>
         </form>
+
+        <script>
+        flatpickr("#d_from_input", {{ dateFormat: "Y-m-d", altInput: true, altFormat: "d.m.Y", allowInput: true }});
+        flatpickr("#d_to_input",   {{ dateFormat: "Y-m-d", altInput: true, altFormat: "d.m.Y", allowInput: true }});
+
+        function validateDateRange() {{
+            var f = document.getElementById('d_from_input').value;
+            var t = document.getElementById('d_to_input').value;
+            if (f && t && f > t) {{
+                alert("{T(lang,'date_range_err')}");
+                return false;
+            }}
+            return true;
+        }}
+        </script>
 
         <div class="table-wrapper">
             <div class="table-container">
@@ -1192,7 +1256,12 @@ async def doctor_worklist(
 # 6. ZIP გადმოწერა
 # ==========================================================
 @app.get("/p/download-zip/{uid}/auto")
-async def download_zip(uid: str):
+async def download_zip(uid: str, doctor_token: str = Cookie(None), patient_auth: str = Cookie(None)):
+    is_doctor  = bool(verify_doctor_token(doctor_token))
+    is_patient = (patient_auth == uid)  # პაციენტმა უკვე გაიარა PID+DOB ვერიფიკაცია სწორედ ამ study-ზე
+    if not (is_doctor or is_patient):
+        return RedirectResponse(url=f"/p/{uid}")  # გაუშვი პაციენტის ვერიფიკაციის გვერდზე
+
     final_name = f"Innova_Study_{uid[:8]}.zip"
     try:
         m_res = requests.get(f"{PACS_URL}/studies?StudyInstanceUID={uid}",
@@ -1650,7 +1719,7 @@ async def upload_submit(
     doctor_token: str = Cookie(None),
     doc_full_name:str = Cookie("Doctor"),
 ):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         return JSONResponse({"status": "error", "detail": "Unauthorized"}, status_code=401)
 
     try:
@@ -1725,7 +1794,7 @@ async def upload_submit(
 # ==========================================================
 @app.get("/doctor/usb-token/{uid}")
 async def usb_get_token(uid: str, doctor_token: str = Cookie(None)):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     # one-time token — 10 წუთი
@@ -1759,7 +1828,7 @@ async def usb_export(
             del _usb_tokens[token]
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "token expired"}, status_code=401)
-    elif not doctor_token:
+    elif not verify_doctor_token(doctor_token):
         return RedirectResponse(url="/login")
 
     # პაციენტის მეტა
@@ -1912,7 +1981,7 @@ async def usb_export(
 # ==========================================================
 @app.get("/doctor/dexa-analyze/{study_uid}")
 async def dexa_analyze(study_uid: str, doctor_token: str = Cookie(None)):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     if not GEMINI_API_KEY:
@@ -2024,7 +2093,7 @@ async def dexa_report(
     doc_full_name: str = Cookie("Doctor"),
     lang:          str = "ka",
 ):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         return RedirectResponse(url="/login")
 
     # პაციენტის მეტა PACS-იდან
@@ -2356,28 +2425,42 @@ async function generateConclusion() {{
 # ==========================================================
 @app.get("/doctor/stats", response_class=HTMLResponse)
 async def doctor_stats(doctor_token: str = Cookie(None), d_from: str = "", d_to: str = ""):
-    if not doctor_token:
+    if not verify_doctor_token(doctor_token):
         return RedirectResponse(url="/login")
 
     # სტატისტიკა პირდაპირ DB-დან
-    import subprocess as _sp
+    import re as _re
     try:
+        def _clean_date(d):
+            """მხოლოდ YYYYMMDD ფორმატის ციფრებს უშვებს, ყველაფერი დანარჩენი (მათ შორის SQL-კოდი) იგდება"""
+            d = (d or "").replace("-", "").strip()
+            return d if _re.fullmatch(r"\d{8}", d) else None
+
+        d_from_c = _clean_date(d_from)
+        d_to_c   = _clean_date(d_to)
+
         date_filter = ""
-        if d_from and d_to:
-            date_filter = f"AND study_date BETWEEN '{d_from.replace('-','')}' AND '{d_to.replace('-','')}'"
-        elif d_from:
-            date_filter = f"AND study_date >= '{d_from.replace('-','')}'"
+        date_params = []
+        if d_from_c and d_to_c:
+            date_filter  = "AND study_date BETWEEN %s AND %s"
+            date_params  = [d_from_c, d_to_c]
+        elif d_from_c:
+            date_filter  = "AND study_date >= %s"
+            date_params  = [d_from_c]
+
+        if not DB_PASS:
+            raise RuntimeError("DB_PASS არ არის დაყენებული (.env/environment) — სტატისტიკის endpoint გათიშულია")
 
         import psycopg2 as _pg
-        conn = _pg.connect(host="db", port=5432, dbname="pacsdb", user="pacs", password="Inn0v@2O!9DB")
+        conn = _pg.connect(host="db", port=5432, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
         cur  = conn.cursor()
 
-        def db_query(sql):
-            cur.execute(sql)
+        def db_query(sql, params=None):
+            cur.execute(sql, params or [])
             return cur.fetchall()
 
         # სულ კვლევები და პაციენტები
-        rows = db_query(f"SELECT COUNT(*), COUNT(DISTINCT patient_fk) FROM study WHERE 1=1 {date_filter};")
+        rows = db_query(f"SELECT COUNT(*), COUNT(DISTINCT patient_fk) FROM study WHERE 1=1 {date_filter};", date_params)
         total_studies  = int(rows[0][0]) if rows else 0
         total_patients = int(rows[0][1]) if rows else 0
 
@@ -2389,7 +2472,7 @@ async def doctor_stats(doctor_token: str = Cookie(None), d_from: str = "", d_to:
             WHERE se.modality IS NOT NULL {date_filter.replace('study_date', 'st.study_date')}
             GROUP BY se.modality
             ORDER BY COUNT(DISTINCT st.pk) DESC;
-        """)
+        """, date_params)
         modality_count = {}
         for mods, cnt in mod_rows:
             if mods:
@@ -2405,7 +2488,7 @@ async def doctor_stats(doctor_token: str = Cookie(None), d_from: str = "", d_to:
             WHERE study_date IS NOT NULL AND study_date != '' {date_filter}
             GROUP BY SUBSTRING(study_date, 1, 6)
             ORDER BY 1;
-        """)
+        """, date_params)
         monthly_count = {}
         for ym, cnt in month_rows:
             ym = str(ym).strip()
@@ -2463,6 +2546,8 @@ async def doctor_stats(doctor_token: str = Cookie(None), d_from: str = "", d_to:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>სტატისტიკა — Innova PACS</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
   * {{ box-sizing:border-box; margin:0; padding:0; }}
@@ -2504,14 +2589,18 @@ async def doctor_stats(doctor_token: str = Cookie(None), d_from: str = "", d_to:
     </div>
     <div style="display:flex;gap:10px;align-items:center;">
       <form method="get" action="/doctor/stats" style="display:flex;gap:8px;align-items:center;">
-        <input type="date" name="d_from" value="{{d_from}}"
+        <input type="date" id="stats_d_from" name="d_from" value="{d_from}" placeholder="დდ.თთ.წწწწ"
                style="padding:8px 12px;border-radius:8px;border:none;font-size:12px;font-weight:700;color:#003366;">
         <span style="color:#93c5fd;font-weight:700;">—</span>
-        <input type="date" name="d_to" value="{{d_to}}"
+        <input type="date" id="stats_d_to" name="d_to" value="{d_to}" placeholder="დდ.თთ.წწწწ"
                style="padding:8px 12px;border-radius:8px;border:none;font-size:12px;font-weight:700;color:#003366;">
         <button type="submit" style="background:#b1d431;color:#003366;border:none;padding:8px 16px;
                 border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;">ძებნა</button>
       </form>
+      <script>
+      flatpickr("#stats_d_from", {{ dateFormat: "Y-m-d", altInput: true, altFormat: "d.m.Y", allowInput: true }});
+      flatpickr("#stats_d_to",   {{ dateFormat: "Y-m-d", altInput: true, altFormat: "d.m.Y", allowInput: true }});
+      </script>
       <a href="/doctor/worklist" class="back-btn">← Worklist</a>
     </div>
   </div>
