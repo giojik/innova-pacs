@@ -16,7 +16,9 @@ RUN pip install --no-cache-dir \
     fastapi \
     uvicorn \
     requests \
-    psycopg2-binary
+    psycopg2-binary \
+    pyjwt \
+    cryptography
 
 # 5. კოდის კოპირება კონტეინერში
 COPY main.py .

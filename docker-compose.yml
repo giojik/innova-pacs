@@ -157,7 +157,6 @@ services:
       - arc
       - ohif
       - pacs-portal
-      - pacsflow
     networks:
       - pacs-net
 
@@ -236,22 +235,6 @@ services:
       - pacs-net
     restart: always 
     
-  pacsflow:
-    build: ./pacsflow
-    container_name: pacsflow
-    restart: always
-    environment:
-      - PACSFLOW_SECRET=${PACSFLOW_SECRET}
-      - KC_BASE=http://keycloak:8080
-      - KC_REALM=dcm4che
-      - KC_CLIENT_ID=risinnova-ui
-      - PACS_LOGIN_URL=https://ris.innovamedical.ge/login
-    volumes:
-      - ./pacsflow/data:/app/data
-    networks:
-      - pacs-net
-
-
 volumes:
   ldap-vol2:
   slapd-vol2:
