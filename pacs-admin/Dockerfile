@@ -18,7 +18,10 @@ RUN pip install --no-cache-dir \
     requests \
     psycopg2-binary \
     pyjwt \
-    cryptography
+    cryptography \
+    ldap3 \
+    python-multipart \
+    pynetdicom
 
 # 5. კოდის კოპირება კონტეინერში
 COPY main.py .

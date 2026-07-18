@@ -229,11 +229,17 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASS=${DB_PASS}
       - DOMAIN_NAME=${DOMAIN_NAME}
+      - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID}
+      - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET}
     volumes:
       - ./pacs-portal:/app/data # აქედან წაიკითხავს JSON და CSV ფაილებს
     networks:
       - pacs-net
-    restart: always 
+    depends_on:
+      - db
+      - keycloak
+      - ldap
+    restart: always
     
 volumes:
   ldap-vol2:

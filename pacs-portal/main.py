@@ -325,8 +325,14 @@ async def doctor_worklist(
     doc_full_name: str = Cookie("Doctor"),
     ui_lang:       str = Cookie("ka"),
 ):
-    if not verify_doctor_token(doctor_token):
+    claims = verify_doctor_token(doctor_token)
+    if not claims:
         return RedirectResponse(url="/login")
+    user_roles = claims.get("realm_access", {}).get("roles", [])
+    admin_link_html = (
+        '<a href="/pacs-admin/" target="_blank" class="btn" style="background:#111827;color:white;">🛠 ადმინი</a>'
+        if ("admin" in user_roles or "technician" in user_roles) else ""
+    )
 
     # query param > cookie
     if not lang:
@@ -530,6 +536,7 @@ async def doctor_worklist(
                 <button onclick="openNewPatient()" class="btn" style="background:#7c3aed;color:white;">➕ ახალი პაციენტი</button>
                 <button onclick="openUpload()" class="btn" style="background:#0369a1;color:white;">⬆ DICOM ატვირთვა</button>
                 <a href="/doctor/stats" target="_blank" class="btn" style="background:#0f766e;color:white;">📊 სტატისტიკა</a>
+                {admin_link_html}
                 <a href="/auth/logout" class="btn btn-dark">{T(lang,'logout')}</a>
             </div>
         </header>
