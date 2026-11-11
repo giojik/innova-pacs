@@ -1,7 +1,8 @@
 import os, requests, smtplib, json, csv, datetime, base64, zipfile, io, struct, secrets
+import subprocess, tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import FastAPI, Form, Request, HTTPException, Cookie
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse, Response, Response
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from langs import T  # ← ლოკალიზაცია ცალკე ფაილიდან
@@ -33,6 +34,192 @@ from jwt import PyJWKClient as _PyJWKClient
 
 _jwks_client = None
 
+# ==========================================================
+# Audit Log — ერთიანი ცხრილი (login/logout/lockout/study_view/share)
+# ==========================================================
+import psycopg2 as _audit_pg
+import psycopg2.extras as _audit_pg_extras
+
+DB_PARAMS = {
+    "host": "db",
+    "database": os.getenv("DB_NAME", "pacsdb"),
+    "user": os.getenv("DB_USER", "pacs"),
+    "password": os.getenv("DB_PASS", "pacs"),
+}
+
+
+def get_client_ip(request: Request) -> str:
+    """nginx-ს proxy_set_header X-Real-IP $remote_addr აქვს დაყენებული — ეს ყველაზე
+    საიმედო ერთეული მნიშვნელობაა. თუ არ არსებობს, X-Forwarded-For-ის პირველ
+    ჩანაწერზე ვცდით, ბოლოს — პირდაპირ TCP კავშირის IP-ზე."""
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "—"
+
+
+def ensure_audit_table():
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id BIGSERIAL PRIMARY KEY,
+                event_time TIMESTAMPTZ NOT NULL DEFAULT now(),
+                event_type VARCHAR(40) NOT NULL,
+                username VARCHAR(255),
+                ip_address VARCHAR(64),
+                patient_id VARCHAR(128),
+                patient_name VARCHAR(255),
+                study_uid VARCHAR(128),
+                details JSONB
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_time ON audit_log(event_time DESC);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_type ON audit_log(event_type);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_username ON audit_log(username);")
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("audit_log ცხრილი მზადაა")
+    except Exception as e:
+        print(f"audit_log ცხრილის შექმნა ვერ მოხერხდა: {e}")
+
+
+def log_event(event_type, username=None, ip_address=None, patient_id=None,
+              patient_name=None, study_uid=None, details=None):
+    """ერთი საერთო წერტილი ყველა auth/study/share მოვლენისთვის —
+    pacs-admin-ის მთავარი Audit ლოგი ამ ცხრილიდან წაიკითხავს."""
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO audit_log
+               (event_type, username, ip_address, patient_id, patient_name, study_uid, details)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (event_type, username, ip_address, patient_id, patient_name, study_uid,
+             _audit_pg_extras.Json(details) if details else None),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"log_event({event_type}) ჩაწერა ვერ მოხერხდა: {e}")
+
+
+@app.on_event("startup")
+async def _startup_ensure_audit_table():
+    ensure_audit_table()
+
+
+# ==========================================================
+# ორსაფეხურიანი ბლოკირება — 3 ჩავარდნაზე USER, 5 ჩავარდნაზე IP
+# ==========================================================
+USER_BLOCK_THRESHOLD = 3
+IP_BLOCK_THRESHOLD = 5
+
+
+def ensure_login_blocks_table():
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS login_blocks (
+                id BIGSERIAL PRIMARY KEY,
+                block_type VARCHAR(10) NOT NULL,
+                identifier VARCHAR(255) NOT NULL,
+                failed_count INT NOT NULL DEFAULT 0,
+                blocked BOOLEAN NOT NULL DEFAULT FALSE,
+                blocked_at TIMESTAMPTZ,
+                unblocked_by VARCHAR(255),
+                unblocked_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(block_type, identifier)
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("login_blocks ცხრილი მზადაა")
+    except Exception as e:
+        print(f"login_blocks ცხრილის შექმნა ვერ მოხერხდა: {e}")
+
+
+@app.on_event("startup")
+async def _startup_ensure_login_blocks_table():
+    ensure_login_blocks_table()
+
+
+def is_blocked(block_type: str, identifier: str) -> bool:
+    if not identifier:
+        return False
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT blocked FROM login_blocks WHERE block_type=%s AND identifier=%s",
+            (block_type, identifier),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return bool(row and row[0])
+    except Exception as e:
+        print(f"is_blocked({block_type}) შემოწმება ვერ მოხერხდა: {e}")
+        return False
+
+
+def record_failed_attempt(block_type: str, identifier: str, threshold: int) -> bool:
+    """ზრდის ჩავარდნილი მცდელობების მთვლელს; აბრუნებს True-ს, თუ ამ ჯერზე
+    ახლადგადააჭარბა threshold-ს (ანუ ახლა დაიბლოკა)."""
+    if not identifier:
+        return False
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO login_blocks (block_type, identifier, failed_count, updated_at)
+            VALUES (%s, %s, 1, now())
+            ON CONFLICT (block_type, identifier)
+            DO UPDATE SET failed_count = login_blocks.failed_count + 1, updated_at = now()
+            RETURNING failed_count, blocked;
+        """, (block_type, identifier))
+        failed_count, already_blocked = cur.fetchone()
+        newly_blocked = False
+        if failed_count >= threshold and not already_blocked:
+            cur.execute(
+                "UPDATE login_blocks SET blocked=TRUE, blocked_at=now() WHERE block_type=%s AND identifier=%s",
+                (block_type, identifier),
+            )
+            newly_blocked = True
+        conn.commit()
+        cur.close()
+        conn.close()
+        return newly_blocked
+    except Exception as e:
+        print(f"record_failed_attempt({block_type}) ვერ მოხერხდა: {e}")
+        return False
+
+
+def reset_failed_attempts(block_type: str, identifier: str):
+    if not identifier:
+        return
+    try:
+        conn = _audit_pg.connect(**DB_PARAMS)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE login_blocks SET failed_count=0, updated_at=now() WHERE block_type=%s AND identifier=%s AND blocked=FALSE",
+            (block_type, identifier),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"reset_failed_attempts({block_type}) ვერ მოხერხდა: {e}")
+
 def verify_doctor_token(token: str):
     """
     ვამოწმებთ doctor_token-ის ხელმოწერას Keycloak-ის public key-ით (JWKS) და ვადას.
@@ -55,6 +242,71 @@ def verify_doctor_token(token: str):
     except Exception as e:
         print(f"doctor_token verification failed: {e}")
         return None
+
+# ── პაციენტის cookie (ხელმოწერილი) + DICOMweb auth_request ──────────────
+import hmac as _hmac, hashlib as _hashlib, time as _time, re as _re
+from urllib.parse import urlsplit as _urlsplit, parse_qs as _parse_qs
+
+_PATIENT_SECRET = (os.getenv("PATIENT_COOKIE_SECRET") or secrets.token_hex(32)).encode()
+_PATIENT_TTL = 3600
+
+def make_patient_cookie(uid: str, pid: str) -> str:
+    exp = str(int(_time.time()) + _PATIENT_TTL)
+    msg = f"{uid}|{pid}|{exp}"
+    sig = _hmac.new(_PATIENT_SECRET, msg.encode(), _hashlib.sha256).hexdigest()
+    return f"{msg}|{sig}"
+
+def read_patient_cookie(value: str):
+    try:
+        uid, pid, exp, sig = (value or "").split("|")
+        good = _hmac.new(_PATIENT_SECRET, f"{uid}|{pid}|{exp}".encode(), _hashlib.sha256).hexdigest()
+        if _hmac.compare_digest(sig, good) and int(exp) > _time.time():
+            return uid, pid
+    except Exception:
+        pass
+    return None
+
+_study_pid_cache: dict = {}
+
+def _study_patient_id(study_uid: str):
+    if study_uid in _study_pid_cache:
+        return _study_pid_cache[study_uid]
+    try:
+        r = requests.get(f"{PACS_URL}/studies", params={"StudyInstanceUID": study_uid},
+                         headers={"Accept": "application/json"}, timeout=5)
+        rows = r.json() if r.status_code == 200 and r.text.strip() else []
+        pid = str(rows[0].get("00100020", {}).get("Value", [""])[0]).strip() if rows else None
+    except Exception:
+        return None
+    if len(_study_pid_cache) > 5000:
+        _study_pid_cache.clear()
+    _study_pid_cache[study_uid] = pid
+    return pid
+
+_UID_IN_PATH = _re.compile(r"/studies/([0-9.]+)")
+
+@app.get("/internal/dicomweb-auth")
+def dicomweb_auth(request: Request):
+    authz = request.headers.get("authorization", "")
+    if authz.lower().startswith("bearer ") and verify_doctor_token(authz[7:].strip()):
+        return Response(status_code=204)
+    if verify_doctor_token(request.cookies.get("doctor_token")):
+        return Response(status_code=204)
+    pat = read_patient_cookie(request.cookies.get("patient_auth"))
+    if not pat:
+        return Response(status_code=401)
+    cookie_uid, cookie_pid = pat
+    uri = _urlsplit(request.headers.get("x-original-uri", ""))
+    q = _parse_qs(uri.query)
+    m = _UID_IN_PATH.search(uri.path)
+    study_uid = m.group(1) if m else (q.get("StudyInstanceUID") or q.get("studyUID") or [None])[0]
+    if study_uid:
+        if study_uid == cookie_uid or _study_patient_id(study_uid) == cookie_pid:
+            return Response(status_code=204)
+        return Response(status_code=403)
+    if uri.path.endswith("/studies") and q.get("PatientID") == [cookie_pid]:
+        return Response(status_code=204)
+    return Response(status_code=403)
                                                         # ← ახალი ბლოკის დასასრული
 OLD_PACS_RS       = os.getenv("OLD_PACS_URL")
 OLD_TOKEN_URL     = os.getenv("OLD_KEYCLOAK_URL")
@@ -188,7 +440,7 @@ STYLE = f"""
 # ==========================================================
 # 3. დამხმარე ფუნქციები
 # ==========================================================
-def log_share_event(sender, recipient, p_name, p_id, study_date, modality):
+def log_share_event(sender, recipient, p_name, p_id, study_date, modality, ip_address=None):
     try:
         file_exists = os.path.exists(SHARE_LOG_FILE)
         with open(SHARE_LOG_FILE, mode='a', newline='', encoding='utf-8-sig') as f:
@@ -201,6 +453,10 @@ def log_share_event(sender, recipient, p_name, p_id, study_date, modality):
                              str(p_id), str(study_date), str(modality)])
     except Exception as e:
         print(f"Logging error: {e}")
+    # ბაზაშიც ვწერთ პარალელურად — CSV უცვლელად რჩება backward-compat-ისთვის
+    log_event("share", username=str(sender), ip_address=ip_address, patient_id=str(p_id),
+               patient_name=str(p_name), details={"recipient": str(recipient),
+               "study_date": str(study_date), "modality": str(modality)})
 
 def get_name_from_token(token):
     try:
@@ -287,7 +543,19 @@ async def login_page(error: str = None, lang: str = "ka"):
     </body></html>"""
 
 @app.post("/auth/login")
-async def auth_login(username: str = Form(...), password: str = Form(...), lang: str = Form("ka")):
+async def auth_login(request: Request, username: str = Form(...), password: str = Form(...), lang: str = Form("ka")):
+    ip = get_client_ip(request)
+
+    # ბლოკის შემოწმება Keycloak-თან დაკავშირებამდე — დაბლოკილი user/IP საერთოდ არ აღწევს Keycloak-მდე
+    if is_blocked("user", username):
+        log_event("login_blocked", username=username, ip_address=ip, details={"block_type": "user"})
+        msg = "ანგარიში დაბლოკილია — მიმართეთ ადმინისტრატორს" if lang == "ka" else "Account is blocked — contact administrator"
+        return RedirectResponse(url=f"/login?lang={lang}&error={msg}", status_code=303)
+    if is_blocked("ip", ip):
+        log_event("login_blocked", username=username, ip_address=ip, details={"block_type": "ip"})
+        msg = "ამ IP-დან წვდომა დაბლოკილია — მიმართეთ ადმინისტრატორს" if lang == "ka" else "Access from this IP is blocked — contact administrator"
+        return RedirectResponse(url=f"/login?lang={lang}&error={msg}", status_code=303)
+
     payload = {'grant_type': 'password', 'client_id': CLIENT_ID,
                'username': username, 'password': password}
     try:
@@ -295,17 +563,41 @@ async def auth_login(username: str = Form(...), password: str = Form(...), lang:
         if r.status_code == 200:
             token    = r.json().get("access_token")
             doc_name = get_name_from_token(token)
+            reset_failed_attempts("user", username)
+            log_event("login_success", username=username, ip_address=ip)
             resp = RedirectResponse(url=f"/doctor/worklist?lang={lang}", status_code=303)
             resp.set_cookie(key="doctor_token",  value=token,    httponly=True, max_age=28800)
             resp.set_cookie(key="doc_full_name", value=doc_name, max_age=28800)
             resp.set_cookie(key="ui_lang",       value=lang,     max_age=28800 * 30)
             return resp
+        # ჩავარდნილი შესვლა — ვცდილობთ განვასხვავოთ Keycloak-ის საკუთარი lockout
+        # ჩვეულებრივი არასწორი პაროლისგან, და ვზრდით ჩვენს user/IP მთვლელებს
+        try:
+            err_desc = (r.json() or {}).get("error_description", "")
+        except Exception:
+            err_desc = ""
+        if "disabled" in err_desc.lower() or "temporarily" in err_desc.lower():
+            log_event("lockout", username=username, ip_address=ip, details={"keycloak_error": err_desc, "source": "keycloak"})
+        else:
+            log_event("login_failed", username=username, ip_address=ip, details={"keycloak_error": err_desc})
+
+        user_now_blocked = record_failed_attempt("user", username, USER_BLOCK_THRESHOLD)
+        ip_now_blocked = record_failed_attempt("ip", ip, IP_BLOCK_THRESHOLD)
+        if user_now_blocked:
+            log_event("lockout", username=username, ip_address=ip, details={"block_type": "user", "threshold": USER_BLOCK_THRESHOLD})
+        if ip_now_blocked:
+            log_event("lockout", username=username, ip_address=ip, details={"block_type": "ip", "threshold": IP_BLOCK_THRESHOLD})
+
         return RedirectResponse(url=f"/login?lang={lang}&error={T(lang,'login_err')}", status_code=303)
-    except:
+    except Exception as e:
+        log_event("login_failed", username=username, ip_address=ip, details={"exception": str(e)})
         return RedirectResponse(url=f"/login?lang={lang}&error={T(lang,'conn_err')}", status_code=303)
 
 @app.get("/auth/logout")
-async def logout():
+async def logout(request: Request, doctor_token: str = Cookie(None)):
+    claims = verify_doctor_token(doctor_token)
+    username = claims.get("preferred_username") if claims else None
+    log_event("logout", username=username, ip_address=get_client_ip(request))
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie("doctor_token")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
@@ -314,6 +606,25 @@ async def logout():
 # ==========================================================
 # 5. ექიმის სამუშაო მაგიდა (Worklist)
 # ==========================================================
+@app.post("/doctor/log-view")
+async def log_study_view(
+    request: Request,
+    study_uid: str = Form(...),
+    patient_name: str = Form(""),
+    patient_id: str = Form(""),
+    doctor_token: str = Cookie(None),
+):
+    """viewer-ის გახსნის წინ, JS-იდან გამოძახებული — აუდიტისთვის ვინახავთ
+    ვინ, როდის, რომელი პაციენტის კვლევა გახსნა."""
+    claims = verify_doctor_token(doctor_token)
+    if not claims:
+        return JSONResponse({"ok": False}, status_code=401)
+    username = claims.get("preferred_username")
+    log_event("study_view", username=username, ip_address=get_client_ip(request),
+               patient_id=patient_id, patient_name=patient_name, study_uid=study_uid)
+    return JSONResponse({"ok": True})
+
+
 @app.get("/doctor/worklist", response_class=HTMLResponse)
 async def doctor_worklist(
     request:       Request,
@@ -474,11 +785,12 @@ async def doctor_worklist(
             </td>
             <td style="text-align:right;">
                 <div style="display:flex;gap:6px;justify-content:flex-end;">
-                    <button onclick="openInDiagnosticMonitor('{uid}')" class="btn btn-green">View</button>
+                    <button onclick="openInDiagnosticMonitor('{uid}','{safe_name}','{p_id}')" class="btn btn-green">View</button>
                     <a href="/p/download-zip/{uid}/auto" class="btn btn-outline">ZIP</a>
                     <button onclick="openShare('{uid}','{safe_name}','{p_id}','{f_dob}','{f_date}','{s_mod}')" class="btn btn-share">Share</button>
                     <button onclick="openRegister('{safe_name}','{p_id}','{f_dob}','{s_mod}')" class="btn" style="background:#7c3aed;color:white;">📋 Reg</button>
                     {"<a href='/doctor/dexa-report/" + uid + "?lang=" + lang + "' target='_blank' class='btn' style='background:#0f766e;color:white;'>🦴 DEXA</a>" if "BMD" in s_mod else ""}
+                    {"<a href='/doctor/video/" + uid + "' target='_blank' class='btn' style='background:#0891b2;color:white;'>🎥 ვიდეო</a>" if "ES" in s_mod else ""}
                 </div>
             </td>
         </tr>"""
@@ -905,8 +1217,19 @@ async def doctor_worklist(
         }});
         // ══════════════════════════════════════════════════════
 
-        async function openInDiagnosticMonitor(studyUID) {{
+        async function openInDiagnosticMonitor(studyUID, patientName, patientId) {{
             const viewerUrl = "/viewer?StudyInstanceUIDs=" + studyUID;
+            // აუდიტისთვის — არ ველოდებით პასუხს, viewer-ის გახსნას არ აყოვნებს
+            try {{
+                fetch('/doctor/log-view', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                    body: 'study_uid=' + encodeURIComponent(studyUID)
+                        + '&patient_name=' + encodeURIComponent(patientName || '')
+                        + '&patient_id=' + encodeURIComponent(patientId || ''),
+                    keepalive: true
+                }});
+            }} catch (e) {{ /* ლოგირების შეცდომა viewer-ის გახსნას არ უნდა შეაფერხოს */ }}
             if ('getScreenDetails' in window) {{
                 try {{
                     const screenDetails = await window.getScreenDetails();
@@ -1378,7 +1701,8 @@ async def doctor_worklist(
 @app.get("/p/download-zip/{uid}/auto")
 async def download_zip(uid: str, doctor_token: str = Cookie(None), patient_auth: str = Cookie(None)):
     is_doctor  = bool(verify_doctor_token(doctor_token))
-    is_patient = (patient_auth == uid)  # პაციენტმა უკვე გაიარა PID+DOB ვერიფიკაცია სწორედ ამ study-ზე
+    _pat = read_patient_cookie(patient_auth)
+    is_patient = bool(_pat) and _pat[0] == uid  # პაციენტმა უკვე გაიარა PID+DOB ვერიფიკაცია სწორედ ამ study-ზე
     if not (is_doctor or is_patient):
         return RedirectResponse(url=f"/p/{uid}")  # გაუშვი პაციენტის ვერიფიკაციის გვერდზე
 
@@ -1424,6 +1748,7 @@ async def download_zip(uid: str, doctor_token: str = Cookie(None), patient_auth:
 # ==========================================================
 @app.post("/p/send-email")
 async def send_email(
+    request:     Request,
     email:       str = Form(...),
     body:        str = Form(...),
     p_name:      str = Form("Unknown"),
@@ -1470,7 +1795,7 @@ async def send_email(
         server.sendmail("pacs@innovamedical.ge", email_final, msg.as_string())
         server.quit()
 
-        log_share_event(sender_final, email_final, patient_final, p_id_final, date_final, mod_final)
+        log_share_event(sender_final, email_final, patient_final, p_id_final, date_final, mod_final, ip_address=get_client_ip(request))
         print(f"✅ გაეგზავნა: {patient_final}")
         return {"status": "success"}
 
@@ -1648,7 +1973,7 @@ async def patient_login_page(study_uid: str, lang: str = "ka"):
     return HTMLResponse(content=html)
 
 @app.post("/p/verify")
-async def verify_patient(uid: str = Form(...), pid: str = Form(...),
+async def verify_patient(request: Request, uid: str = Form(...), pid: str = Form(...),
                          dob: str = Form(...), lang: str = Form("ka")):
     try:
         r = requests.get(f"{PACS_URL}/studies",
@@ -1661,8 +1986,11 @@ async def verify_patient(uid: str = Form(...), pid: str = Form(...),
             u_pid    = "".join(filter(str.isdigit, pid))
             u_dob    = "".join(filter(str.isdigit, dob))
             if u_pid == real_pid and u_dob == real_dob:
+                log_event("patient_self_view", ip_address=get_client_ip(request),
+                           patient_id=real_pid, study_uid=uid)
                 resp = RedirectResponse(url=f"/viewer?StudyInstanceUIDs={uid}", status_code=303)
-                resp.set_cookie(key="patient_auth", value=uid, max_age=3600,
+                resp.set_cookie(key="patient_auth", value=make_patient_cookie(uid, real_pid), max_age=3600,
+                                httponly=True, samesite="lax",
                                 path="/", domain=DOMAIN_NAME, secure=True)
                 return resp
         return HTMLResponse(f"<script>alert('{T(lang,'patient_err')}'); window.history.back();</script>")
@@ -2524,6 +2852,250 @@ async function generateConclusion() {{
 </html>"""
 
     return HTMLResponse(content=html)
+
+
+# ==========================================================
+# ენდოსკოპიის ვიდეო — /doctor/video/{study_uid}
+# dcm4chee-arc WADO-RS /rendered-ზე გადამისამართება
+# ==========================================================
+def _find_video_instances(study_uid: str):
+    """study-ში ყველა ES modality ვიდეო-ინსტანციის (series_uid, instance_uid) წყვილის მოძებნა"""
+    videos = []
+    r2 = requests.get(
+        f"{PACS_URL}/studies/{study_uid}/series",
+        headers={"Accept": "application/json"}, timeout=10
+    )
+    if r2.status_code != 200:
+        raise HTTPException(status_code=502, detail="PACS მიუწვდომელია")
+
+    for series in r2.json():
+        if (series.get("00080060", {}).get("Value") or [""])[0] != "ES":
+            continue
+        series_uid = series.get("0020000E", {}).get("Value", [""])[0]
+
+        r3 = requests.get(
+            f"{PACS_URL}/studies/{study_uid}/series/{series_uid}/instances",
+            headers={"Accept": "application/json"}, timeout=10
+        )
+        if r3.status_code != 200:
+            continue
+
+        for inst in r3.json():
+            sop_class    = (inst.get("00080016", {}).get("Value") or [""])[0]
+            instance_uid = (inst.get("00080018", {}).get("Value") or [""])[0]
+            if sop_class == "1.2.840.10008.5.1.4.1.1.77.1.1.1" and instance_uid:
+                videos.append((series_uid, instance_uid))
+    return videos
+
+
+def _stream_video(study_uid: str, series_uid: str, instance_uid: str):
+    """dcm4chee-დან raw H.264-ის წამოღება, ffmpeg-ით remux სწორ MP4-ში, პასუხად დაბრუნება"""
+    # raw H.264 stream — dcm4chee-ს /rendered ამ SOP Class-ისთვის ვალიდურ MP4
+    # container-ს არ აწყობს, მხოლოდ elementary stream-ს აბრუნებს
+    rendered_url = (
+        f"{PACS_URL}/studies/{study_uid}/series/{series_uid}"
+        f"/instances/{instance_uid}/rendered?accept=video/mp4"
+    )
+    vr = requests.get(rendered_url, timeout=30)
+    if vr.status_code != 200 or not vr.content:
+        raise HTTPException(status_code=502, detail="ვიდეოს წამოღება ვერ მოხერხდა")
+
+    in_path  = None
+    out_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".h264", delete=False) as fin:
+            fin.write(vr.content)
+            in_path = fin.name
+        out_path = in_path.replace(".h264", "_fixed.mp4")
+
+        # remux (re-encode-ის გარეშე) სწორ MP4 container-ში — ხარისხს არ კარგავს
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-i", in_path,
+             "-c", "copy", "-movflags", "+faststart", out_path],
+            capture_output=True, timeout=60
+        )
+        if proc.returncode != 0 or not os.path.exists(out_path):
+            print(f"ffmpeg remux შეცდომა: {proc.stderr.decode(errors='ignore')[-500:]}")
+            raise HTTPException(status_code=500, detail="ვიდეოს დამუშავება ვერ მოხერხდა")
+
+        with open(out_path, "rb") as f:
+            video_bytes = f.read()
+        return Response(content=video_bytes, media_type="video/mp4")
+    finally:
+        for p in (in_path, out_path):
+            if p and os.path.exists(p):
+                os.remove(p)
+
+
+def _get_patient_and_study_info(study_uid: str):
+    """study-level metadata: პაციენტის მონაცემები + ამ study-ის თარიღი/აღწერა"""
+    r = requests.get(
+        f"{PACS_URL}/studies",
+        params={"StudyInstanceUID": study_uid, "includefield": "all"},
+        headers={"Accept": "application/json"}, timeout=10
+    )
+    if r.status_code != 200 or not r.json():
+        return None
+    s = r.json()[0]
+    raw_name = s.get("00100010", {}).get("Value", [{}])[0].get("Alphabetic", "")
+    p_name   = raw_name.replace("^", " ").strip() or "—"
+    p_id     = str(s.get("00100020", {}).get("Value", [""])[0]) or "—"
+    dob_raw  = str(s.get("00100030", {}).get("Value", [""])[0])
+    p_dob    = f"{dob_raw[6:8]}.{dob_raw[4:6]}.{dob_raw[:4]}" if len(dob_raw) == 8 else (dob_raw or "—")
+    p_sex    = {"M": "მამრობითი", "F": "მდედრობითი", "O": "სხვა"}.get(
+        str(s.get("00100040", {}).get("Value", [""])[0]), "—")
+    sd_raw   = str(s.get("00080020", {}).get("Value", [""])[0])
+    s_date   = f"{sd_raw[6:8]}.{sd_raw[4:6]}.{sd_raw[:4]}" if len(sd_raw) == 8 else (sd_raw or "—")
+    study_desc = str((s.get("00081030", {}).get("Value") or [""])[0]).strip() or "—"
+    return {
+        "p_name": p_name, "p_id": p_id, "p_dob": p_dob, "p_sex": p_sex,
+        "study_date": s_date, "study_desc": study_desc,
+    }
+
+
+def _find_other_video_studies(patient_id: str, exclude_study_uid: str):
+    """იმავე პაციენტის სხვა study-ები, სადაც ES (ვიდეო) modality ფიგურირებს — თარიღებად დაჯგუფებული, ახლიდან ძველისკენ"""
+    if not patient_id:
+        return {}
+    r = requests.get(
+        f"{PACS_URL}/studies",
+        params={"PatientID": patient_id, "includefield": "all"},
+        headers={"Accept": "application/json"}, timeout=10
+    )
+    if r.status_code != 200:
+        return {}
+
+    grouped = {}
+    for s in r.json():
+        uid = s.get("0020000D", {}).get("Value", [""])[0]
+        if not uid or uid == exclude_study_uid:
+            continue
+        mod_list = s.get("00080061", {}).get("Value") or s.get("00080060", {}).get("Value") or []
+        if "ES" not in mod_list:
+            continue
+        sd_raw = str(s.get("00080020", {}).get("Value", [""])[0])
+        date_disp = f"{sd_raw[6:8]}.{sd_raw[4:6]}.{sd_raw[:4]}" if len(sd_raw) == 8 else (sd_raw or "თარიღის გარეშე")
+        desc = str((s.get("00081030", {}).get("Value") or ["ენდოსკოპია"])[0]).strip() or "ენდოსკოპია"
+        grouped.setdefault((sd_raw, date_disp), []).append({"uid": uid, "desc": desc})
+
+    return {k[1]: v for k in sorted(grouped.keys(), reverse=True) for v in [grouped[k]]}
+
+
+@app.get("/doctor/video/{study_uid}")
+async def doctor_video(
+    study_uid:    str,
+    series:       str = None,
+    instance:     str = None,
+    raw:          str = None,
+    doctor_token: str = Cookie(None),
+):
+    if not verify_doctor_token(doctor_token):
+        return RedirectResponse(url="/login")
+
+    try:
+        # raw=1 — <video src>-ის პირდაპირი მოთხოვნა კონკრეტულ ინსტანციაზე
+        # (split-view player-იდან, JS-ით გამოძახებული)
+        if raw and series and instance:
+            return _stream_video(study_uid, series, instance)
+
+        videos = _find_video_instances(study_uid)
+        if not videos:
+            raise HTTPException(status_code=404, detail="ვიდეო-ინსტანცია ვერ მოიძებნა")
+
+        patient_info  = _get_patient_and_study_info(study_uid) or {}
+        other_studies = _find_other_video_studies(patient_info.get("p_id"), study_uid)
+
+        # ვიდეოების სია — მიმდინარე study
+        list_items = ""
+        for i, (series_uid, instance_uid) in enumerate(videos, start=1):
+            src_url = f"/doctor/video/{study_uid}?series={series_uid}&instance={instance_uid}&raw=1"
+            list_items += f"""
+            <button class="vid-item{' active' if i == 1 else ''}" data-src="{src_url}"
+                    onclick="selectVideo(this)">🎥 ვიდეო {i}</button>"""
+
+        first_src = f"/doctor/video/{study_uid}?series={videos[0][0]}&instance={videos[0][1]}&raw=1"
+
+        # სხვა (ვიდეო-შემცველი) study-ები — თარიღების მიხედვით დაჯგუფებული
+        other_html = ""
+        if other_studies:
+            for date_disp, items in other_studies.items():
+                other_html += f'<div class="date-group">{date_disp}</div>'
+                for it in items:
+                    other_html += (
+                        f'<a class="study-link" href="/doctor/video/{it["uid"]}">{it["desc"]}</a>'
+                    )
+        else:
+            other_html = '<div class="no-other">სხვა ვიდეო-კვლევა არ არის</div>'
+
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>ვიდეო-ჩანაწერები</title>
+        <style>
+            body {{ margin:0; font-family:sans-serif; background:#0f172a; color:#e2e8f0;
+                    display:flex; flex-direction:column; height:100vh; }}
+            #patient-bar {{ flex-shrink:0; background:#1e293b; border-bottom:1px solid #334155;
+                            padding:12px 20px; display:flex; gap:24px; align-items:center;
+                            font-size:13px; flex-wrap:wrap; }}
+            #patient-bar b {{ font-size:15px; }}
+            #patient-bar span {{ color:#94a3b8; }}
+            #main {{ flex:1; display:flex; min-height:0; }}
+            #sidebar {{ width:240px; flex-shrink:0; background:#1e293b; padding:16px 10px;
+                        overflow-y:auto; box-sizing:border-box; }}
+            #sidebar h4 {{ margin:16px 4px 12px 4px; font-size:12px; color:#94a3b8;
+                           text-transform:uppercase; letter-spacing:0.5px; }}
+            #sidebar h4:first-child {{ margin-top:0; }}
+            .vid-item {{ display:block; width:100%; text-align:left; margin-bottom:8px;
+                         padding:10px 12px; background:#334155; color:#e2e8f0; border:none;
+                         border-radius:6px; cursor:pointer; font-size:13px; font-weight:600; }}
+            .vid-item:hover {{ background:#475569; }}
+            .vid-item.active {{ background:#0891b2; }}
+            .date-group {{ font-size:11px; color:#64748b; font-weight:700; margin:10px 4px 4px; }}
+            .study-link {{ display:block; padding:8px 12px; margin-bottom:6px; background:#293548;
+                           color:#cbd5e1; border-radius:6px; text-decoration:none; font-size:12.5px; }}
+            .study-link:hover {{ background:#334155; }}
+            .no-other {{ font-size:12px; color:#64748b; padding:0 4px; }}
+            #player-wrap {{ flex:1; display:flex; align-items:center; justify-content:center;
+                            background:#000; }}
+            video {{ max-width:100%; max-height:100%; }}
+        </style>
+        </head>
+        <body>
+            <div id="patient-bar">
+                <b>{patient_info.get("p_name", "—")}</b>
+                <span>ID: {patient_info.get("p_id", "—")}</span>
+                <span>დაბ.თარ: {patient_info.get("p_dob", "—")}</span>
+                <span>{patient_info.get("p_sex", "—")}</span>
+                <span>კვლევის თარიღი: {patient_info.get("study_date", "—")}</span>
+                <span>{patient_info.get("study_desc", "—")}</span>
+            </div>
+            <div id="main">
+                <div id="sidebar">
+                    <h4>ეს კვლევა ({len(videos)})</h4>
+                    {list_items}
+                    <h4>სხვა კვლევები</h4>
+                    {other_html}
+                </div>
+                <div id="player-wrap">
+                    <video id="player" src="{first_src}" controls autoplay></video>
+                </div>
+            </div>
+        <script>
+            function selectVideo(btn) {{
+                document.querySelectorAll('.vid-item').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const player = document.getElementById('player');
+                player.src = btn.dataset.src;
+                player.load();
+                player.play();
+            }}
+        </script>
+        </body></html>"""
+        return HTMLResponse(content=html)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"doctor_video error: {e}")
+        raise HTTPException(status_code=500, detail="შეცდომა ვიდეოს ძიებისას")
 
 
 # ==========================================================

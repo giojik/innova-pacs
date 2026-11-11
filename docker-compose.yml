@@ -182,6 +182,8 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASS=${DB_PASS}
+      - PATIENT_COOKIE_SECRET=${PATIENT_COOKIE_SECRET}
+      - TZ=${TZ}
     volumes:
       - ./pacs-portal/share_logs.csv:/app/share_logs.csv
       - ./pacs-portal/migration_status.txt:/app/migration_status.txt
@@ -205,6 +207,7 @@ services:
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASS=${DB_PASS}
+      - TZ=${TZ}
     networks:
       - pacs-net
     depends_on:
@@ -216,6 +219,32 @@ services:
     command: python dicom_proxy.py
     ports:
       - "11115:11115"
+    networks:
+      - pacs-net
+    restart: always
+  
+  pacs-onec-sync:
+    build: ./pacs-portal
+    container_name: pacs-onec-sync
+    command: python -u onec_order_sync_final.py
+    environment:
+      - AE_TITLE=${AE_TITLE}
+      - ONEC_BASE_URL=${ONEC_BASE_URL}
+      - ONEC_USER=${ONEC_USER}
+      - ONEC_PASSWORD=${ONEC_PASSWORD}
+      - PYTHONUNBUFFERED=1
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - SMTP_SERVER=${SMTP_SERVER}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - ONEC_SYNC_WINDOW_MINUTES=120
+      - TZ=${TZ}
+    volumes:
+      - ./pacs-portal/onec_synced_docs.txt:/app/onec_synced_docs.txt
+      - ./pacs-portal/onec_needs_review.txt:/app/onec_needs_review.txt
     networks:
       - pacs-net
     restart: always
@@ -231,6 +260,7 @@ services:
       - DOMAIN_NAME=${DOMAIN_NAME}
       - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID}
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      - TZ=${TZ}
     volumes:
       - ./pacs-portal:/app/data # აქედან წაიკითხავს JSON და CSV ფაილებს
     networks:
@@ -239,6 +269,24 @@ services:
       - db
       - keycloak
       - ldap
+    restart: always
+
+  pacs-qc:
+    build: ./pacs-qc
+    container_name: pacs-qc
+    command: uvicorn main:app --host 0.0.0.0 --port 8006
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASS=${DB_PASS}
+      - AE_TITLE=${AE_TITLE}
+      - ADMIN_URL_PREFIX=/pacs-qc
+      - TZ=${TZ}
+    networks:
+      - pacs-net
+    depends_on:
+      - db
+      - arc
     restart: always
     
 volumes:
