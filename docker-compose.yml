@@ -116,14 +116,15 @@ services:
 
   # 5. OHIF Viewer
   ohif:
-    image: ohif/app:v3.10.0-beta.33
+    image: ghcr.io/giojik/pacsflow-ohif:3.13.9-pf13
     container_name: pacs-ohif
     restart: always
     mem_limit: 512m
     volumes:
-       - ./configuration/ohif/app-config.js:/usr/share/nginx/html/app-config.js
-       - ./configuration/ohif/app-config-public.js:/usr/share/nginx/html/app-config-public.js
-       - ./configuration/locales/ka/Common.json:/usr/share/nginx/html/locales/ka/Common.json
+       - ./configuration/ohif/app-config.js:/usr/share/nginx/html/app-config.js:ro
+       #- ./configuration/ohif/app-config.js:/usr/share/nginx/html/app-config.js
+       #- ./configuration/ohif/app-config-public.js:/usr/share/nginx/html/app-config-public.js
+       #- ./configuration/locales/ka/Common.json:/usr/share/nginx/html/locales/ka/Common.json
     networks:
       - pacs-net
 
