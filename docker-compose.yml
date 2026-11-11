@@ -116,7 +116,7 @@ services:
 
   # 5. OHIF Viewer
   ohif:
-    image: ghcr.io/giojik/pacsflow-ohif:3.13.9-pf13
+    image: ghcr.io/giojik/pacsflow-ohif:3.13.9-pf15
     container_name: pacs-ohif
     restart: always
     mem_limit: 512m

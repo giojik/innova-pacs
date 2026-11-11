@@ -16,6 +16,7 @@ window.config = {
     brand: 'Innova',
     portalUrl: '/login',
     grantHelp: false,
+    zipUrl: '/p/download-zip/{uid}/auto',
   },
   showStudyList: true,
   oidc: [
