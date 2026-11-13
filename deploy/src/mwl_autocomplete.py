@@ -26,7 +26,7 @@ DB = dict(host=os.getenv("DB_HOST", "db"), database=os.getenv("DB_NAME", "pacsdb
 LOOKBACK_DAYS = int(os.getenv("MWL_AUTOCOMPLETE_DAYS", "7"))
 MAX_PER_RUN = int(os.getenv("MWL_AUTOCOMPLETE_MAX", "200"))
 
-_GROUPS = [{"CR", "DX", "MG", "DR"}, {"RF", "XA"}]
+_GROUPS = [{"CR", "DX", "MG", "DR", "RF"}, {"XA"}]   # რენტგენი ერთ ჯგუფად: Shimadzu (proxy) ყველაფერს RF-ით აგზავნის
 
 
 def mod_group(m):
