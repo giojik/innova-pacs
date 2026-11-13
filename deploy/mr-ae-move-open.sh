@@ -14,12 +14,13 @@ cat > /tmp/mr_move.py <<'__PY__'
 import sys, requests
 OLD, NEW = "MR_INNOVA", "AWP20611182"
 B = "http://pacs-arc:8080/dcm4chee-arc/aets/RISINNOVA/rs"
+W = "http://pacs-arc:8080/dcm4chee-arc/aets/WORKLIST/rs"   # MWL-ის წაკითხვა მხოლოდ WORKLIST AE-ზე
 apply = sys.argv[1] == "--apply"
 uids = [u for u in sys.argv[2:] if u]
 def v(d, t, x=""): return ((d.get(t) or {}).get("Value") or [x])[0]
 rows = []
 for uid in uids:
-    r = requests.get(f"{B}/mwlitems", params={"StudyInstanceUID": uid, "includefield": "all"},
+    r = requests.get(f"{W}/mwlitems", params={"StudyInstanceUID": uid, "includefield": "all"},
                      headers={"Accept": "application/json"}, timeout=20)
     if r.status_code != 200 or not r.content:
         print(f"  ? {uid[:30]}… GET {r.status_code}"); continue
